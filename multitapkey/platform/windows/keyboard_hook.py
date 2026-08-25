@@ -302,7 +302,12 @@ class WindowsKeyboardBackend:
                     l_param,
                 )
 
-            info = l_param.contents
+            info = ctypes.cast(
+                l_param,
+                ctypes.POINTER(
+                    KBDLLHOOKSTRUCT
+                ),
+            ).contents
 
             # 1. Own injected input: never interpret.
             if info.dwExtraInfo == INJECTED_MARKER:
