@@ -1,15 +1,26 @@
-"""Immutable configuration model and strict validation."""
+"""Immutable configuration model and strict validation (Schema v2).
+
+Breaking change: the old ``modifier + key`` action model is gone.
+Every action is a Chord (``{"type": "chord", "keys": [...]}``);
+a single key is a chord of length 1. ``{"type": "disabled"}`` means
+the gesture is unbound. Old v1 configuration files are NOT migrated.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
 
+from .chord import (
+    MAX_CHORD_KEYS,
+    canonicalize_keys,
+    chord_display,
+)
 from .key_names import (
     is_valid_key_name,
-    is_valid_modifier,
 )
 
+CONFIG_VERSION = 2
 
 PROFILE_NAMES = (
     "default",
@@ -23,19 +34,22 @@ SUPPORTED_LANGUAGES = (
     "en_US",
 )
 
+MAX_TAP_COUNT = 9
+
 ACTION_FIELDS = {
     "type",
-    "key",
-    "modifiers",
+    "keys",
+}
+
+GESTURE_FIELDS = {
+    "taps",
+    "hold",
 }
 
 BINDING_FIELDS = {
     "trigger",
     "enabled",
-    "single",
-    "double",
-    "triple",
-    "long",
+    "gestures",
 }
 
 SETTINGS_FIELDS = {
@@ -43,6 +57,7 @@ SETTINGS_FIELDS = {
     "hold_threshold_ms",
     "start_with_windows",
     "language",
+    "enable_gesture_overlay",
 }
 
 ROOT_FIELDS = {
@@ -68,25 +83,49 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class ActionSpec:
-    type: str
-    key: str | None = None
-    modifiers: tuple[str, ...] = ()
+    type: str  # "chord" | "disabled"
+    keys: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class GestureSpec:
+    taps: tuple[
+        tuple[int, ActionSpec],
+        ...,
+    ] = ()
+    hold: ActionSpec = field(
+        default_factory=lambda: ActionSpec(
+            type="disabled"
+        )
+    )
+
+    @property
+    def max_taps(self) -> int:
+        if not self.taps:
+            return 0
+        return max(
+            count
+            for count, _ in self.taps
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class Binding:
-    trigger: str
+    trigger: tuple[str, ...]
     enabled: bool
-    single: ActionSpec
-    double: ActionSpec
-    triple: ActionSpec
-    long: ActionSpec
+    gestures: GestureSpec
+
+    @property
+    def trigger_display(self) -> str:
+        return chord_display(
+            self.trigger
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class Profile:
     name: str
-    bindings: tuple[Binding, ...]
+    bindings: tuple[Binding, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,11 +134,12 @@ class Settings:
     hold_threshold_ms: int = 500
     start_with_windows: bool = False
     language: str = "system"
+    enable_gesture_overlay: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class Config:
-    version: int = 1
+    version: int = CONFIG_VERSION
     settings: Settings = field(
         default_factory=Settings
     )
@@ -163,63 +203,35 @@ def _validate_action(
     action_type = obj.get("type")
 
     if action_type not in {
-        "key",
+        "chord",
         "disabled",
     }:
         raise ConfigError(
             "invalid_type",
             field="action.type",
-            expected="key|disabled",
+            expected="chord|disabled",
         )
 
-    modifiers_raw = obj.get(
-        "modifiers",
+    raw_keys = obj.get(
+        "keys",
         [],
     )
 
     if not isinstance(
-        modifiers_raw,
+        raw_keys,
         list,
     ):
         raise ConfigError(
             "invalid_type",
-            field="action.modifiers",
+            field="action.keys",
             expected="array",
         )
 
-    modifiers: list[str] = []
-
-    for modifier in modifiers_raw:
-        if not is_valid_modifier(
-            modifier
-        ):
-            raise ConfigError(
-                "invalid_key",
-                key=modifier,
-            )
-
-        if modifier in modifiers:
-            raise ConfigError(
-                "duplicate_key",
-                key=modifier,
-            )
-
-        modifiers.append(modifier)
-
-    key = obj.get("key")
-
     if action_type == "disabled":
-        if key is not None:
+        if raw_keys:
             raise ConfigError(
                 "invalid_type",
-                field="action.key",
-                expected="null",
-            )
-
-        if modifiers:
-            raise ConfigError(
-                "invalid_type",
-                field="action.modifiers",
+                field="action.keys",
                 expected="empty",
             )
 
@@ -227,16 +239,111 @@ def _validate_action(
             type="disabled"
         )
 
-    if not is_valid_key_name(key):
+    for key in raw_keys:
+        if not is_valid_key_name(key):
+            raise ConfigError(
+                "invalid_key",
+                key=key,
+            )
+
+    if not raw_keys:
         raise ConfigError(
             "invalid_key",
-            key=key,
+            key="<empty chord>",
         )
 
+    if len(raw_keys) > MAX_CHORD_KEYS:
+        raise ConfigError(
+            "invalid_key",
+            key="<chord too large>",
+        )
+
+    canonical = canonicalize_keys(
+        raw_keys
+    )
+
     return ActionSpec(
-        type="key",
-        key=key,
-        modifiers=tuple(modifiers),
+        type="chord",
+        keys=canonical,
+    )
+
+
+def _validate_gestures(
+    data: Any,
+) -> GestureSpec:
+    obj = _require_dict(
+        data,
+        "gestures",
+    )
+
+    _require_exact_keys(
+        obj,
+        GESTURE_FIELDS,
+    )
+
+    taps_obj = _require_dict(
+        obj.get("taps"),
+        "gestures.taps",
+    )
+
+    taps: list[
+        tuple[int, ActionSpec]
+    ] = []
+    seen_counts: set[int] = set()
+
+    for raw_count, raw_action in (
+        taps_obj.items()
+    ):
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            raise ConfigError(
+                "invalid_type",
+                field="gestures.taps",
+                expected="integer keys",
+            ) from None
+
+        if not 1 <= count <= MAX_TAP_COUNT:
+            raise ConfigError(
+                "invalid_range",
+                field="gestures.taps",
+            )
+
+        if count in seen_counts:
+            raise ConfigError(
+                "duplicate_key",
+                key=str(count),
+            )
+
+        seen_counts.add(count)
+
+        taps.append(
+            (
+                count,
+                _validate_action(
+                    raw_action
+                ),
+            )
+        )
+
+    if not taps:
+        raise ConfigError(
+            "invalid_type",
+            field="gestures.taps",
+            expected="at least one tap",
+        )
+
+    taps.sort(
+        key=lambda item: item[0]
+    )
+
+    hold = _validate_action(
+        obj.get("hold")
+    )
+
+    return GestureSpec(
+        taps=tuple(taps),
+        hold=hold,
     )
 
 
@@ -253,12 +360,15 @@ def _validate_binding(
         BINDING_FIELDS,
     )
 
-    trigger = obj.get("trigger")
+    trigger_action = _validate_action(
+        obj.get("trigger")
+    )
 
-    if not is_valid_key_name(trigger):
+    if trigger_action.type != "chord":
         raise ConfigError(
-            "invalid_key",
-            key=trigger,
+            "invalid_type",
+            field="binding.trigger",
+            expected="chord",
         )
 
     enabled = obj.get("enabled")
@@ -270,21 +380,14 @@ def _validate_binding(
             expected="bool",
         )
 
+    gestures = _validate_gestures(
+        obj.get("gestures")
+    )
+
     return Binding(
-        trigger=trigger,
+        trigger=trigger_action.keys,
         enabled=enabled,
-        single=_validate_action(
-            obj.get("single")
-        ),
-        double=_validate_action(
-            obj.get("double")
-        ),
-        triple=_validate_action(
-            obj.get("triple")
-        ),
-        long=_validate_action(
-            obj.get("long")
-        ),
+        gestures=gestures,
     )
 
 
@@ -314,17 +417,24 @@ def _validate_profile(
     )
 
     bindings: list[Binding] = []
-    seen_triggers: set[str] = set()
+    seen_triggers: set[
+        tuple[str, ...]
+    ] = set()
 
     for raw_binding in raw_bindings:
         binding = _validate_binding(
             raw_binding
         )
 
-        if binding.trigger in seen_triggers:
+        if (
+            binding.trigger
+            in seen_triggers
+        ):
             raise ConfigError(
                 "duplicate_key",
-                key=binding.trigger,
+                key=(
+                    binding.trigger_display
+                ),
             )
 
         seen_triggers.add(
@@ -358,7 +468,7 @@ def validate_and_build(
 
     if (
         type(version) is not int
-        or version != 1
+        or version != CONFIG_VERSION
     ):
         raise ConfigError(
             "unsupported_version",
@@ -386,6 +496,9 @@ def validate_and_build(
     )
     language = settings_obj.get(
         "language"
+    )
+    enable_overlay = settings_obj.get(
+        "enable_gesture_overlay"
     )
 
     if type(double_tap) is not int:
@@ -427,6 +540,13 @@ def validate_and_build(
             language=language,
         )
 
+    if type(enable_overlay) is not bool:
+        raise ConfigError(
+            "invalid_type",
+            field="enable_gesture_overlay",
+            expected="bool",
+        )
+
     profiles_obj = _require_dict(
         data.get("profiles"),
         "profiles",
@@ -449,52 +569,69 @@ def validate_and_build(
     )
 
     return Config(
-        version=1,
+        version=CONFIG_VERSION,
         settings=Settings(
             double_tap_interval_ms=double_tap,
             hold_threshold_ms=hold_threshold,
             start_with_windows=start_with_windows,
             language=language,
+            enable_gesture_overlay=enable_overlay,
         ),
         profiles=profiles,
     )
 
 
-def default_config() -> Config:
-    key_action = lambda key: ActionSpec(
-        type="key",
-        key=key,
-        modifiers=(),
+def _chord_action(
+    *keys: str,
+) -> ActionSpec:
+    return ActionSpec(
+        type="chord",
+        keys=canonicalize_keys(keys),
     )
 
-    disabled = ActionSpec(
+
+def _disabled_action() -> ActionSpec:
+    return ActionSpec(
         type="disabled"
     )
 
-    default_binding = Binding(
-        trigger="F24",
+
+def _default_binding() -> Binding:
+    return Binding(
+        trigger=canonicalize_keys(
+            ("F24",)
+        ),
         enabled=True,
-        single=key_action("F23"),
-        double=key_action("F24"),
-        triple=key_action("F22"),
-        long=key_action("F21"),
+        gestures=GestureSpec(
+            taps=(
+                (1, _chord_action("F23")),
+                (2, _chord_action("F24")),
+                (3, _chord_action("F22")),
+                (4, _chord_action("F21")),
+            ),
+            hold=_chord_action("F21"),
+        ),
     )
 
+
+def default_config() -> Config:
+    binding = _default_binding()
+
     return Config(
-        version=1,
+        version=CONFIG_VERSION,
         settings=Settings(),
         profiles=(
             Profile(
                 name="default",
-                bindings=(default_binding,),
+                bindings=(binding,),
             ),
             Profile(
                 name="Gaming",
-                bindings=(),
+                bindings=(binding,),
             ),
             Profile(
                 name="Work",
-                bindings=(),
+                bindings=(binding,),
             ),
         ),
     )
@@ -519,9 +656,24 @@ def _action_to_dict(
 ) -> dict[str, Any]:
     return {
         "type": action.type,
-        "key": action.key,
-        "modifiers": list(
-            action.modifiers
+        "keys": list(action.keys),
+    }
+
+
+def _gestures_to_dict(
+    gestures: GestureSpec,
+) -> dict[str, Any]:
+    return {
+        "taps": {
+            str(count): (
+                _action_to_dict(action)
+            )
+            for count, action in (
+                gestures.taps
+            )
+        },
+        "hold": _action_to_dict(
+            gestures.hold
         ),
     }
 
@@ -530,19 +682,15 @@ def _binding_to_dict(
     binding: Binding,
 ) -> dict[str, Any]:
     return {
-        "trigger": binding.trigger,
+        "trigger": _action_to_dict(
+            ActionSpec(
+                type="chord",
+                keys=binding.trigger,
+            )
+        ),
         "enabled": binding.enabled,
-        "single": _action_to_dict(
-            binding.single
-        ),
-        "double": _action_to_dict(
-            binding.double
-        ),
-        "triple": _action_to_dict(
-            binding.triple
-        ),
-        "long": _action_to_dict(
-            binding.long
+        "gestures": _gestures_to_dict(
+            binding.gestures
         ),
     }
 
@@ -563,6 +711,9 @@ def to_dict(
                 config.settings.start_with_windows
             ),
             "language": config.settings.language,
+            "enable_gesture_overlay": (
+                config.settings.enable_gesture_overlay
+            ),
         },
         "profiles": {
             profile.name: {

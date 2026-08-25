@@ -1,9 +1,10 @@
-"""Platform-independent runtime engine."""
+"""Platform-independent runtime engine (Chord-based)."""
 
 from __future__ import annotations
 
 import logging
 import queue
+from typing import Callable
 
 from multitapkey.platform.base import (
     InputBackend,
@@ -14,40 +15,53 @@ from .actions import (
     Action,
     ActionDispatcher,
 )
+from .chord import (
+    chord_display,
+)
 from .config_models import (
     ActionSpec,
-    Config,
     Binding,
+    Config,
+    GestureSpec,
     get_profile,
 )
 from .state_machine import (
     Gesture,
     TapStateMachine,
+    gesture_for_count,
 )
 
 
 log = logging.getLogger(__name__)
 
-_GESTURE_ATTR = {
-    Gesture.SINGLE: "single",
-    Gesture.DOUBLE: "double",
-    Gesture.TRIPLE: "triple",
-    Gesture.LONG: "long",
+# Gesture -> tap count
+_TAP_COUNT_FOR_GESTURE: dict[
+    Gesture,
+    int,
+] = {
+    Gesture.SINGLE: 1,
+    Gesture.DOUBLE: 2,
+    Gesture.TRIPLE: 3,
+    Gesture.TAP4: 4,
+    Gesture.TAP5: 5,
+    Gesture.TAP6: 6,
+    Gesture.TAP7: 7,
+    Gesture.TAP8: 8,
+    Gesture.TAP9: 9,
 }
 
 
 def _action_from_spec(
     spec: ActionSpec,
 ) -> Action:
-    if spec.type != "key":
+    if spec.type != "chord":
         return Action(
             kind="disabled"
         )
 
     return Action(
-        kind="key",
-        key=spec.key,
-        modifiers=spec.modifiers,
+        kind="chord",
+        keys=spec.keys,
     )
 
 
@@ -60,8 +74,7 @@ class Engine:
         self.backend = keyboard_backend
 
         self._dispatcher = ActionDispatcher(
-            tap=input_backend.tap_key,
-            combo=input_backend.tap_combo,
+            chord=input_backend.tap_chord,
         )
 
         self._machines: dict[
@@ -82,6 +95,15 @@ class Engine:
         self._config_loaded = False
         self._paused = False
         self._active = False
+
+        # OSD 观察者（独立于核心识别逻辑；默认 None）
+        self._gesture_observer: (
+            Callable[
+                [str, str],
+                None,
+            ]
+            | None
+        ) = None
 
     def start(self) -> bool:
         if self._backend_started:
@@ -118,7 +140,7 @@ class Engine:
         self._machines = {}
         self._bindings = {}
 
-        self.backend.set_trigger_keys(
+        self.backend.set_trigger_chords(
             frozenset()
         )
 
@@ -169,6 +191,16 @@ class Engine:
     ) -> bool:
         return not self._backend_started
 
+    def set_gesture_observer(
+        self,
+        observer: Callable[
+            [str, str],
+            None,
+        ]
+        | None,
+    ) -> None:
+        self._gesture_observer = observer
+
     def apply_config(
         self,
         config: Config,
@@ -203,36 +235,50 @@ class Engine:
             Binding,
         ] = {}
 
+        trigger_chords: set[
+            tuple[str, ...]
+        ] = set()
+
         for binding in profile.bindings:
             if not binding.enabled:
                 continue
 
-            key = binding.trigger
+            display = (
+                binding.trigger_display
+            )
 
-            new_machines[key] = (
+            max_taps = (
+                binding.gestures.max_taps
+            )
+
+            if max_taps < 1:
+                continue
+
+            new_machines[display] = (
                 TapStateMachine(
-                    trigger_key=key,
+                    trigger_key=display,
                     double_tap_interval_ms=interval,
                     hold_threshold_ms=hold,
+                    max_taps=max_taps,
                     on_gesture=(
                         lambda gesture,
-                        trigger=key:
+                        trig=display:
                         self._dispatch(
-                            trigger,
+                            trig,
                             gesture,
                         )
                     ),
                 )
             )
 
-            new_bindings[key] = binding
+            new_bindings[display] = binding
 
-        new_trigger_keys = frozenset(
-            new_machines
-        )
+            trigger_chords.add(
+                binding.trigger
+            )
 
-        self.backend.set_trigger_keys(
-            new_trigger_keys
+        self.backend.set_trigger_chords(
+            frozenset(trigger_chords)
         )
 
         for machine in self._machines.values():
@@ -342,24 +388,87 @@ class Engine:
 
     def _dispatch(
         self,
-        trigger_key: str,
+        trigger_display: str,
         gesture: Gesture,
     ) -> None:
         binding = self._bindings.get(
-            trigger_key
+            trigger_display
         )
 
         if binding is None:
             return
 
-        action_spec = getattr(
-            binding,
-            _GESTURE_ATTR[gesture],
+        self._notify_observer(
+            trigger_display,
+            gesture,
         )
 
-        self.execute_action_spec(
-            action_spec
+        if gesture == Gesture.LONG:
+            self.execute_action_spec(
+                binding.gestures.hold
+            )
+            return
+
+        count = _TAP_COUNT_FOR_GESTURE.get(
+            gesture
         )
+
+        if count is None:
+            return
+
+        action_spec = self._tap_action(
+            binding.gestures,
+            count,
+        )
+
+        if action_spec is not None:
+            self.execute_action_spec(
+                action_spec
+            )
+
+    @staticmethod
+    def _tap_action(
+        gestures: GestureSpec,
+        count: int,
+    ) -> ActionSpec | None:
+        for tap_count, action in (
+            gestures.taps
+        ):
+            if tap_count == count:
+                return action
+
+        return None
+
+    def _notify_observer(
+        self,
+        trigger_display: str,
+        gesture: Gesture,
+    ) -> None:
+        if self._gesture_observer is None:
+            return
+
+        if gesture == Gesture.LONG:
+            description = (
+                f"{trigger_display} HOLD"
+            )
+        else:
+            count = _TAP_COUNT_FOR_GESTURE.get(
+                gesture,
+                1,
+            )
+            description = (
+                f"{trigger_display} × {count}"
+            )
+
+        try:
+            self._gesture_observer(
+                trigger_display,
+                description,
+            )
+        except Exception:
+            log.exception(
+                "gesture observer failed"
+            )
 
     def execute_action_spec(
         self,

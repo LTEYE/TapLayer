@@ -1,4 +1,4 @@
-"""Pure tap-gesture state machine."""
+"""Pure tap-gesture state machine (dynamic tap counts + hold)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import logging
 import time
 from enum import Enum, auto
 from typing import Callable
+
+from .config_models import MAX_TAP_COUNT
 
 
 log = logging.getLogger(__name__)
@@ -15,7 +17,32 @@ class Gesture(Enum):
     SINGLE = auto()
     DOUBLE = auto()
     TRIPLE = auto()
+    TAP4 = auto()
+    TAP5 = auto()
+    TAP6 = auto()
+    TAP7 = auto()
+    TAP8 = auto()
+    TAP9 = auto()
     LONG = auto()
+
+
+_GESTURE_FOR_COUNT: dict[int, Gesture] = {
+    1: Gesture.SINGLE,
+    2: Gesture.DOUBLE,
+    3: Gesture.TRIPLE,
+    4: Gesture.TAP4,
+    5: Gesture.TAP5,
+    6: Gesture.TAP6,
+    7: Gesture.TAP7,
+    8: Gesture.TAP8,
+    9: Gesture.TAP9,
+}
+
+
+def gesture_for_count(
+    count: int,
+) -> Gesture:
+    return _GESTURE_FOR_COUNT[count]
 
 
 class _State(Enum):
@@ -31,6 +58,7 @@ class TapStateMachine:
         trigger_key: str,
         double_tap_interval_ms: int,
         hold_threshold_ms: int,
+        max_taps: int,
         on_gesture: Callable[[Gesture], None],
         on_error: Callable[[Exception], None] | None = None,
     ) -> None:
@@ -42,7 +70,12 @@ class TapStateMachine:
             hold_threshold_ms
         )
 
-        self.max_taps = 3
+        if not 1 <= max_taps <= MAX_TAP_COUNT:
+            raise ValueError(
+                f"max_taps out of range: {max_taps}"
+            )
+
+        self.max_taps = max_taps
 
         self._on_gesture = on_gesture
         self._on_error = (
@@ -175,7 +208,7 @@ class TapStateMachine:
 
         if self._count >= self.max_taps:
             self._fire(
-                self._gesture_for_count(
+                gesture_for_count(
                     self._count
                 )
             )
@@ -192,23 +225,13 @@ class TapStateMachine:
             return
 
         self._fire(
-            self._gesture_for_count(
+            gesture_for_count(
                 self._count
             )
         )
 
         self._state = _State.IDLE
         self._count = 0
-
-    @staticmethod
-    def _gesture_for_count(
-        count: int,
-    ) -> Gesture:
-        return {
-            1: Gesture.SINGLE,
-            2: Gesture.DOUBLE,
-            3: Gesture.TRIPLE,
-        }[count]
 
     def _fire(
         self,

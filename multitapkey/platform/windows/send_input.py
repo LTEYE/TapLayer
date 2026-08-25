@@ -1,4 +1,4 @@
-"""Windows keyboard output using SendInput."""
+"""Windows keyboard output using SendInput (Chord-based)."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ def _key_up_vk(vk: int) -> None:
 
 
 class WindowsInputBackend:
-    """Implements InputBackend."""
+    """Implements InputBackend (tap_key / tap_chord)."""
 
     def __init__(
         self,
@@ -123,68 +123,45 @@ class WindowsInputBackend:
         self._lock = threading.Lock()
 
     def tap_key(self, key: str) -> None:
-        vk = key_to_vk(key)
+        self.tap_chord((key,))
 
+    def tap_chord(
+        self,
+        keys: tuple[str, ...],
+    ) -> None:
+        if not keys:
+            return
+
+        vks = tuple(
+            key_to_vk(key)
+            for key in keys
+        )
+
+        # 不同 Chord 不能互相交错
         with self._lock:
-            down_sent = False
+            held: list[int] = []
 
             try:
-                self._down(vk)
-                down_sent = True
-                time.sleep(self._hold_seconds)
+                for vk in vks:
+                    self._down(vk)
+                    held.append(vk)
+                    time.sleep(
+                        self._inter_key_delay_seconds
+                    )
+
+                time.sleep(
+                    self._hold_seconds
+                )
+
             finally:
-                if down_sent:
+                # 所有成功按下的键都必须尝试松开
+                for vk in reversed(held):
                     try:
                         self._up(vk)
                     except Exception:
                         log.exception(
-                            "failed to release injected key: key=%s",
-                            key,
-                        )
-
-    def tap_combo(
-        self,
-        modifier_keys: tuple[str, ...],
-        key: str,
-    ) -> None:
-        modifier_vks = tuple(
-            key_to_vk(modifier)
-            for modifier in modifier_keys
-        )
-        key_vk = key_to_vk(key)
-
-        with self._lock:
-            held_modifiers: list[int] = []
-            main_down = False
-
-            try:
-                for modifier_vk in modifier_vks:
-                    self._down(modifier_vk)
-                    held_modifiers.append(modifier_vk)
-                    time.sleep(self._inter_key_delay_seconds)
-
-                self._down(key_vk)
-                main_down = True
-
-                time.sleep(self._hold_seconds)
-
-            finally:
-                if main_down:
-                    try:
-                        self._up(key_vk)
-                    except Exception:
-                        log.exception(
-                            "failed to release combo main key: key=%s",
-                            key,
-                        )
-
-                for modifier_vk in reversed(held_modifiers):
-                    try:
-                        self._up(modifier_vk)
-                    except Exception:
-                        log.exception(
-                            "failed to release combo modifier: vk=%s",
-                            modifier_vk,
+                            "failed to release injected chord key: vk=%s",
+                            vk,
                         )
 
                     time.sleep(

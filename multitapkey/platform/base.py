@@ -1,4 +1,4 @@
-"""Cross-platform backend contracts."""
+"""Cross-platform backend contracts (Chord-based)."""
 
 from __future__ import annotations
 
@@ -40,7 +40,10 @@ class KeyboardBackend(Protocol):
     def poll_capture_result(self) -> CaptureResult | None:
         ...
 
-    def set_trigger_keys(self, keys: frozenset[str]) -> None:
+    def set_trigger_chords(
+        self,
+        chords: frozenset[tuple[str, ...]],
+    ) -> None:
         ...
 
     def set_enabled(self, enabled: bool) -> None:
@@ -52,10 +55,9 @@ class InputBackend(Protocol):
     def tap_key(self, key: str) -> None:
         ...
 
-    def tap_combo(
+    def tap_chord(
         self,
-        modifier_keys: tuple[str, ...],
-        key: str,
+        keys: tuple[str, ...],
     ) -> None:
         ...
 

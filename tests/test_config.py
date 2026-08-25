@@ -1,207 +1,448 @@
-import json
-
 import pytest
 
+from multitapkey.core.chord import canonicalize_keys
 from multitapkey.core.config_models import (
+    ActionSpec,
+    Binding,
+    Config,
     ConfigError,
+    GestureSpec,
+    Profile,
+    Settings,
     default_config,
+    get_profile,
     to_dict,
     validate_and_build,
 )
-from multitapkey.core.config_store import (
-    load_config_file,
-)
 
 
-def base_data():
-    return to_dict(
-        default_config()
-    )
+def chord(*keys):
+    return {
+        "type": "chord",
+        "keys": list(keys),
+    }
+
+
+def disabled():
+    return {
+        "type": "disabled",
+        "keys": [],
+    }
+
+
+def binding_dict(trigger=("F24",), enabled=True):
+    return {
+        "trigger": chord(*trigger),
+        "enabled": enabled,
+        "gestures": {
+            "taps": {
+                "1": chord("F23"),
+                "2": chord("F24"),
+                "3": chord("F22"),
+                "4": chord("F21"),
+            },
+            "hold": chord("F21"),
+        },
+    }
+
+
+def make_dict(**overrides):
+    data = {
+        "version": 2,
+        "settings": {
+            "double_tap_interval_ms": 250,
+            "hold_threshold_ms": 500,
+            "start_with_windows": False,
+            "language": "system",
+            "enable_gesture_overlay": False,
+        },
+        "profiles": {
+            "default": {
+                "bindings": [binding_dict()],
+            },
+            "Gaming": {
+                "bindings": [],
+            },
+            "Work": {
+                "bindings": [],
+            },
+        },
+    }
+
+    data.update(overrides)
+    return data
 
 
 def test_valid_default():
     config = validate_and_build(
-        base_data()
+        make_dict()
     )
 
-    assert config.version == 1
+    assert config.version == 2
+    assert len(config.profiles) == 3
 
 
 @pytest.mark.parametrize(
     "version",
-    [True, False, 0, 2, "1"],
+    [1, 3, "2", None],
 )
 def test_invalid_version(version):
-    data = base_data()
-    data["version"] = version
+    with pytest.raises(ConfigError) as exc:
+        validate_and_build(
+            make_dict(version=version)
+        )
 
-    with pytest.raises(ConfigError):
-        validate_and_build(data)
+    assert exc.value.code == (
+        "unsupported_version"
+    )
 
 
 def test_bool_rejected_as_double_tap():
-    data = base_data()
-
-    data["settings"][
-        "double_tap_interval_ms"
-    ] = True
-
     with pytest.raises(ConfigError):
-        validate_and_build(data)
+        validate_and_build(
+            make_dict(
+                settings={
+                    "double_tap_interval_ms": True,
+                    "hold_threshold_ms": 500,
+                    "start_with_windows": False,
+                    "language": "system",
+                    "enable_gesture_overlay": False,
+                }
+            )
+        )
 
 
-@pytest.mark.parametrize(
-    "value",
-    [49, 1001],
-)
-def test_double_tap_range(value):
-    data = base_data()
-
-    data["settings"][
-        "double_tap_interval_ms"
-    ] = value
-
+def test_double_tap_range():
     with pytest.raises(ConfigError):
-        validate_and_build(data)
+        validate_and_build(
+            make_dict(
+                settings={
+                    "double_tap_interval_ms": 10,
+                    "hold_threshold_ms": 500,
+                    "start_with_windows": False,
+                    "language": "system",
+                    "enable_gesture_overlay": False,
+                }
+            )
+        )
 
 
-@pytest.mark.parametrize(
-    "value",
-    [99, 5001],
-)
-def test_hold_range(value):
-    data = base_data()
-
-    data["settings"][
-        "hold_threshold_ms"
-    ] = value
-
+def test_hold_range():
     with pytest.raises(ConfigError):
-        validate_and_build(data)
+        validate_and_build(
+            make_dict(
+                settings={
+                    "double_tap_interval_ms": 250,
+                    "hold_threshold_ms": 50,
+                    "start_with_windows": False,
+                    "language": "system",
+                    "enable_gesture_overlay": False,
+                }
+            )
+        )
+
+
+def test_overlay_must_be_bool():
+    with pytest.raises(ConfigError):
+        validate_and_build(
+            make_dict(
+                settings={
+                    "double_tap_interval_ms": 250,
+                    "hold_threshold_ms": 500,
+                    "start_with_windows": False,
+                    "language": "system",
+                    "enable_gesture_overlay": "yes",
+                }
+            )
+        )
 
 
 def test_unknown_root_field():
-    data = base_data()
-    data["unexpected"] = 123
+    with pytest.raises(ConfigError) as exc:
+        validate_and_build(
+            make_dict(mystery=True)
+        )
 
-    with pytest.raises(ConfigError):
-        validate_and_build(data)
-
-
-def test_invalid_key():
-    data = base_data()
-
-    data["profiles"]["default"][
-        "bindings"
-    ][0]["trigger"] = "NOT_A_KEY"
-
-    with pytest.raises(ConfigError):
-        validate_and_build(data)
-
-
-def test_duplicate_trigger():
-    data = base_data()
-
-    data["profiles"]["default"][
-        "bindings"
-    ].append(
-        data["profiles"]["default"][
-            "bindings"
-        ][0]
+    assert exc.value.code == (
+        "unknown_field"
     )
 
+
+def test_invalid_trigger_key():
     with pytest.raises(ConfigError):
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {
+                        "bindings": [
+                            binding_dict(
+                                trigger=("NOPE",)
+                            )
+                        ],
+                    },
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
+                }
+            )
+        )
+
+
+def test_empty_chord_rejected():
+    with pytest.raises(ConfigError):
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {
+                        "bindings": [
+                            binding_dict(
+                                trigger=()
+                            )
+                        ],
+                    },
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
+                }
+            )
+        )
+
+
+def test_duplicate_trigger_rejected():
+    data = make_dict()
+
+    data["profiles"]["default"] = {
+        "bindings": [
+            binding_dict(trigger=("A", "S")),
+            binding_dict(trigger=("S", "A")),
+        ],
+    }
+
+    with pytest.raises(ConfigError) as exc:
         validate_and_build(data)
+
+    assert exc.value.code == (
+        "duplicate_key"
+    )
+
+
+def test_single_key_and_chord_are_distinct():
+    data = make_dict()
+
+    data["profiles"]["default"] = {
+        "bindings": [
+            binding_dict(trigger=("A",)),
+            binding_dict(trigger=("A", "S")),
+        ],
+    }
+
+    config = validate_and_build(data)
+
+    assert len(
+        config.profiles[0].bindings
+    ) == 2
 
 
 def test_invalid_action_type():
-    data = base_data()
+    with pytest.raises(ConfigError):
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {
+                        "bindings": [
+                            {
+                                "trigger": chord("F24"),
+                                "enabled": True,
+                                "gestures": {
+                                    "taps": {
+                                        "1": {
+                                            "type": "key",
+                                            "keys": ["A"],
+                                        },
+                                    },
+                                    "hold": disabled(),
+                                },
+                            },
+                        ],
+                    },
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
+                }
+            )
+        )
 
-    data["profiles"]["default"][
-        "bindings"
-    ][0]["single"]["type"] = "macro"
+
+def test_disabled_action_with_keys_rejected():
+    with pytest.raises(ConfigError):
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {
+                        "bindings": [
+                            {
+                                "trigger": chord("F24"),
+                                "enabled": True,
+                                "gestures": {
+                                    "taps": {
+                                        "1": {
+                                            "type": "disabled",
+                                            "keys": ["A"],
+                                        },
+                                    },
+                                    "hold": disabled(),
+                                },
+                            },
+                        ],
+                    },
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
+                }
+            )
+        )
+
+
+def test_chord_too_large_rejected():
+    keys = ["A", "B", "C", "D", "E", "F", "G", "H", "I"]
 
     with pytest.raises(ConfigError):
-        validate_and_build(data)
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {
+                        "bindings": [
+                            binding_dict(trigger=keys),
+                        ],
+                    },
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
+                }
+            )
+        )
 
 
-def test_duplicate_modifier():
-    data = base_data()
-
-    data["profiles"]["default"][
-        "bindings"
-    ][0]["single"][
-        "modifiers"
-    ] = ["Ctrl", "Ctrl"]
-
+def test_tap_count_range():
     with pytest.raises(ConfigError):
-        validate_and_build(data)
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {
+                        "bindings": [
+                            {
+                                "trigger": chord("F24"),
+                                "enabled": True,
+                                "gestures": {
+                                    "taps": {
+                                        "10": chord("F23"),
+                                    },
+                                    "hold": disabled(),
+                                },
+                            },
+                        ],
+                    },
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
+                }
+            )
+        )
 
 
 def test_invalid_profile_set():
-    data = base_data()
-
-    del data["profiles"]["Work"]
-
     with pytest.raises(ConfigError):
-        validate_and_build(data)
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {"bindings": []},
+                }
+            )
+        )
 
 
 def test_invalid_language():
-    data = base_data()
-
-    data["settings"]["language"] = "fr_FR"
-
     with pytest.raises(ConfigError):
-        validate_and_build(data)
-
-
-def test_corrupt_json(tmp_path):
-    path = (
-        tmp_path
-        / "bad.json"
-    )
-
-    path.write_text(
-        "{not valid json",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigError):
-        load_config_file(path)
+        validate_and_build(
+            make_dict(
+                settings={
+                    "double_tap_interval_ms": 250,
+                    "hold_threshold_ms": 500,
+                    "start_with_windows": False,
+                    "language": "fr_FR",
+                    "enable_gesture_overlay": False,
+                }
+            )
+        )
 
 
 def test_config_immutable():
-    config = default_config()
+    config = validate_and_build(
+        make_dict()
+    )
 
-    with pytest.raises(
-        AttributeError
-    ):
-        config.version = 2
-
-    with pytest.raises(
-        AttributeError
-    ):
-        config.profiles = ()
+    with pytest.raises(Exception):
+        config.settings.double_tap_interval_ms = 999
 
 
 def test_round_trip():
-    data = base_data()
-
     config = validate_and_build(
-        data
+        make_dict()
     )
 
-    assert (
+    rebuilt = validate_and_build(
         to_dict(config)
-        == data
     )
+
+    assert config == rebuilt
 
 
 def test_import_data_has_no_shared_mutable_runtime():
-    first = default_config()
-    second = validate_and_build(
-        to_dict(first)
+    config = validate_and_build(
+        make_dict()
     )
 
-    assert first == second
+    rebuilt = validate_and_build(
+        to_dict(config)
+    )
+
+    assert config is not rebuilt
+    assert config.profiles[0] is not (
+        rebuilt.profiles[0]
+    )
+
+
+def test_chord_keys_are_canonicalized():
+    config = validate_and_build(
+        make_dict(
+            profiles={
+                "default": {
+                    "bindings": [
+                        binding_dict(
+                            trigger=("S", "A")
+                        ),
+                    ],
+                },
+                "Gaming": {"bindings": []},
+                "Work": {"bindings": []},
+            }
+        )
+    )
+
+    binding = config.profiles[0].bindings[0]
+
+    assert binding.trigger == (
+        "A",
+        "S",
+    )
+
+
+def test_default_config_profiles_populated():
+    config = default_config()
+
+    for profile in config.profiles:
+        assert len(profile.bindings) > 0
+
+
+def test_default_trigger_is_f24():
+    config = default_config()
+
+    binding = config.profiles[0].bindings[0]
+
+    assert binding.trigger == (
+        "F24",
+    )

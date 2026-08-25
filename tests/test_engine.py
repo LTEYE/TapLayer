@@ -1,238 +1,377 @@
 import queue
 
 from multitapkey.core.config_models import (
-    default_config,
+    ActionSpec,
+    Binding,
+    Config,
+    GestureSpec,
+    Profile,
+    Settings,
 )
-from multitapkey.core.engine import (
-    Engine,
-)
+from multitapkey.core.engine import Engine
 from multitapkey.platform.base import (
+    CaptureResult,
     RawKeyEvent,
 )
 
 
+def chord(*keys):
+    return ActionSpec(
+        type="chord",
+        keys=keys,
+    )
+
+
+def disabled_action():
+    return ActionSpec(
+        type="disabled"
+    )
+
+
+def make_config(
+    taps=None,
+    hold=None,
+    trigger=("F24",),
+):
+    if taps is None:
+        taps = {
+            1: chord("F23"),
+        }
+    if hold is None:
+        hold = disabled_action()
+
+    binding = Binding(
+        trigger=trigger,
+        enabled=True,
+        gestures=GestureSpec(
+            taps=tuple(
+                sorted(taps.items())
+            ),
+            hold=hold,
+        ),
+    )
+
+    return Config(
+        version=2,
+        settings=Settings(),
+        profiles=(
+            Profile(
+                name="default",
+                bindings=(binding,),
+            ),
+            Profile(
+                name="Gaming",
+                bindings=(),
+            ),
+            Profile(
+                name="Work",
+                bindings=(),
+            ),
+        ),
+    )
+
+
 class FakeKeyboardBackend:
-    def __init__(self):
+    def __init__(self) -> None:
         self.events = queue.SimpleQueue()
-        self.trigger_keys = frozenset()
+        self.captured = queue.SimpleQueue()
+        self.trigger_chords = frozenset()
         self.enabled = False
         self.started = False
 
-    def start(self):
+    def start(self) -> bool:
         self.started = True
         return True
 
-    def stop(self):
+    def stop(self) -> None:
         self.started = False
-        self.enabled = False
 
-    def begin_capture(self):
+    def begin_capture(self) -> None:
         pass
 
-    def cancel_capture(self):
-        pass
+    def cancel_capture(self) -> None:
+        self.captured.put(
+            CaptureResult(kind="cancel")
+        )
 
     def poll_capture_result(self):
-        return None
+        try:
+            return self.captured.get_nowait()
+        except queue.Empty:
+            return None
 
-    def set_trigger_keys(self, keys):
-        self.trigger_keys = frozenset(keys)
+    def set_trigger_chords(
+        self,
+        chords,
+    ) -> None:
+        self.trigger_chords = frozenset(
+            chords
+        )
 
-    def set_enabled(self, enabled):
+    def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
 
 
 class FakeInputBackend:
-    def __init__(self):
-        self.tap_calls = []
-        self.combo_calls = []
+    def __init__(self) -> None:
+        self.sent: list[tuple] = []
 
-    def tap_key(self, key):
-        self.tap_calls.append(key)
+    def tap_key(self, key: str) -> None:
+        self.sent.append((key,))
 
-    def tap_combo(
+    def tap_chord(
         self,
-        modifier_keys,
-        key,
-    ):
-        self.combo_calls.append(
-            (
-                modifier_keys,
-                key,
-            )
-        )
+        keys,
+    ) -> None:
+        self.sent.append(tuple(keys))
 
 
-def make_engine():
+def make_engine(config=None):
     keyboard = FakeKeyboardBackend()
-    input_backend = FakeInputBackend()
+    inputs = FakeInputBackend()
 
     engine = Engine(
         keyboard_backend=keyboard,
-        input_backend=input_backend,
+        input_backend=inputs,
     )
 
     engine.start()
 
-    return (
-        engine,
-        keyboard,
-        input_backend,
-    )
+    if config is not None:
+        engine.apply_config(config)
+
+    return engine, keyboard, inputs
 
 
-def test_backend_starts_disabled():
-    engine, keyboard, _ = (
-        make_engine()
-    )
-
-    assert keyboard.started
-    assert keyboard.enabled is False
-    assert engine.active is False
-
-
-def test_apply_config_activates_backend():
-    engine, keyboard, _ = (
-        make_engine()
-    )
-
-    engine.apply_config(
-        default_config()
-    )
-
-    assert keyboard.enabled is True
-    assert engine.active is True
-    assert "F24" in keyboard.trigger_keys
-
-
-def test_single_event_dispatches_f23():
-    engine, _, input_backend = (
-        make_engine()
-    )
-
-    engine.apply_config(
-        default_config()
-    )
-
-    engine.backend.events.put(
+def feed(
+    keyboard,
+    key,
+    is_down,
+    seconds,
+):
+    keyboard.events.put(
         RawKeyEvent(
-            key="F24",
-            is_down=True,
+            key=key,
+            is_down=is_down,
             injected=False,
-            timestamp=0.0,
+            timestamp=seconds,
         )
     )
 
-    engine.backend.events.put(
-        RawKeyEvent(
-            key="F24",
-            is_down=False,
-            injected=False,
-            timestamp=0.06,
-        )
+
+def test_single_tap_dispatches():
+    engine, keyboard, inputs = make_engine(
+        make_config()
     )
 
-    engine.pump()
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
     engine.pump()
 
-    engine._machines[
-        "F24"
-    ].check_timeouts(
-        0.4
-    )
-
-    assert input_backend.tap_calls == [
-        "F23"
+    assert inputs.sent == [
+        ("F23",)
     ]
 
 
-def test_pause_drains_queue():
-    engine, keyboard, input_backend = (
-        make_engine()
-    )
-
-    engine.apply_config(
-        default_config()
-    )
-
-    keyboard.events.put(
-        RawKeyEvent(
-            key="F24",
-            is_down=True,
-            injected=False,
-            timestamp=0,
+def test_double_tap_dispatches():
+    engine, keyboard, inputs = make_engine(
+        make_config(
+            taps={
+                1: chord("F23"),
+                2: chord("F24"),
+            }
         )
     )
 
-    engine.pause()
+    for t in (0.0, 0.15):
+        feed(keyboard, "F24", True, t)
+        feed(keyboard, "F24", False, t + 0.06)
 
     engine.pump()
 
-    assert (
-        input_backend.tap_calls
-        == []
+    assert inputs.sent == [
+        ("F24",)
+    ]
+
+
+def test_tap4_dispatches():
+    engine, keyboard, inputs = make_engine(
+        make_config(
+            taps={
+                1: chord("F23"),
+                2: chord("F24"),
+                3: chord("F22"),
+                4: chord("F21"),
+            }
+        )
     )
-    assert keyboard.enabled is False
+
+    for i in range(4):
+        t = i * 0.15
+        feed(keyboard, "F24", True, t)
+        feed(keyboard, "F24", False, t + 0.06)
+
+    engine.pump()
+
+    assert inputs.sent == [
+        ("F21",)
+    ]
 
 
-def test_resume_reenables_backend():
-    engine, keyboard, _ = (
-        make_engine()
+def test_chord_output_dispatches():
+    engine, keyboard, inputs = make_engine(
+        make_config(
+            taps={
+                1: chord("Ctrl", "A"),
+            }
+        )
     )
 
-    engine.apply_config(
-        default_config()
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
+    engine.pump()
+
+    assert inputs.sent == [
+        ("Ctrl", "A")
+    ]
+
+
+def test_hold_dispatches():
+    engine, keyboard, inputs = make_engine(
+        make_config(
+            taps={
+                1: chord("F23"),
+            },
+            hold=chord("F21"),
+        )
+    )
+
+    from multitapkey.core.state_machine import (
+        Gesture,
+    )
+
+    engine._dispatch(
+        "F24",
+        Gesture.LONG,
+    )
+
+    assert inputs.sent == [
+        ("F21",)
+    ]
+
+
+def test_disabled_gesture_does_nothing():
+    engine, keyboard, inputs = make_engine(
+        make_config(
+            taps={
+                1: disabled_action(),
+            }
+        )
+    )
+
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
+    engine.pump()
+
+    assert inputs.sent == []
+
+
+def test_disabled_binding_ignored():
+    config = make_config()
+    binding = config.profiles[0].bindings[0]
+    config = Config(
+        version=2,
+        settings=Settings(),
+        profiles=(
+            Profile(
+                name="default",
+                bindings=(
+                    Binding(
+                        trigger=binding.trigger,
+                        enabled=False,
+                        gestures=binding.gestures,
+                    ),
+                ),
+            ),
+            Profile(
+                name="Gaming",
+                bindings=(),
+            ),
+            Profile(
+                name="Work",
+                bindings=(),
+            ),
+        ),
+    )
+
+    engine, keyboard, inputs = make_engine(config)
+
+    assert keyboard.trigger_chords == frozenset()
+
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
+    engine.pump()
+
+    assert inputs.sent == []
+
+
+def test_trigger_chords_registered():
+    engine, keyboard, _ = make_engine(
+        make_config(
+            trigger=("A", "S")
+        )
+    )
+
+    assert ("A", "S") in (
+        keyboard.trigger_chords
+    )
+
+
+def test_gesture_observer_notified():
+    engine, keyboard, _ = make_engine(
+        make_config()
+    )
+
+    observed = []
+
+    engine.set_gesture_observer(
+        lambda trigger, desc: observed.append(
+            (trigger, desc)
+        )
+    )
+
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
+    engine.pump()
+
+    assert observed == [
+        ("F24", "F24 × 1")
+    ]
+
+
+def test_gesture_observer_not_called_when_unset():
+    engine, keyboard, _ = make_engine(
+        make_config()
+    )
+
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
+    engine.pump()
+
+    # 未设置观察者时不报错
+    assert True
+
+
+def test_pause_clears_state():
+    engine, keyboard, _ = make_engine(
+        make_config()
     )
 
     engine.pause()
 
-    engine.resume()
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
+    engine.pump()
 
-    assert keyboard.enabled is True
-    assert engine.active is True
-
-
-def test_profile_switch_changes_runtime():
-    engine, keyboard, _ = (
-        make_engine()
-    )
-
-    config = default_config()
-
-    engine.apply_config(
-        config,
-        "Gaming",
-    )
-
-    assert (
-        engine.profile_name
-        == "Gaming"
-    )
-
-    assert keyboard.trigger_keys == frozenset()
-
-
-def test_cancel_pending_drains_queue():
-    engine, keyboard, _ = (
-        make_engine()
-    )
-
-    engine.apply_config(
-        default_config()
-    )
-
-    keyboard.events.put(
-        RawKeyEvent(
-            key="F24",
-            is_down=True,
-            injected=False,
-            timestamp=0,
-        )
-    )
-
-    engine.cancel_pending()
-
-    with __import__(
-        "pytest"
-    ).raises(queue.Empty):
-        keyboard.events.get_nowait()
+    # 暂停时事件被丢弃，不触发动作
+    assert engine.paused

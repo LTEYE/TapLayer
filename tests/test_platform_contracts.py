@@ -1,74 +1,37 @@
+"""Cross-platform backend protocol contracts (Chord-based)."""
+
 from multitapkey.platform.base import (
     InputBackend,
     KeyboardBackend,
     StartupBackend,
 )
+from multitapkey.platform.windows.keyboard_hook import (
+    WindowsKeyboardBackend,
+)
+from multitapkey.platform.windows.send_input import (
+    WindowsInputBackend,
+)
+from multitapkey.platform.windows.startup import (
+    WindowsStartupBackend,
+)
 
 
-class FakeKeyboardBackend:
-    events = None
-
-    def start(self):
-        return True
-
-    def stop(self):
-        pass
-
-    def begin_capture(self):
-        pass
-
-    def cancel_capture(self):
-        pass
-
-    def poll_capture_result(self):
-        return None
-
-    def set_trigger_keys(self, keys):
-        pass
-
-    def set_enabled(self, enabled):
-        pass
-
-
-class FakeInputBackend:
-    def tap_key(self, key):
-        pass
-
-    def tap_combo(
-        self,
-        modifier_keys,
-        key,
-    ):
-        pass
-
-
-class FakeStartupBackend:
-    def is_available(self):
-        return True
-
-    def get_startup(self):
-        return False
-
-    def set_startup(self, enabled):
-        pass
-
-
-def test_keyboard_contract():
+def test_keyboard_backend_protocol():
     assert isinstance(
-        FakeKeyboardBackend(),
+        WindowsKeyboardBackend(),
         KeyboardBackend,
     )
 
 
-def test_input_contract():
+def test_input_backend_protocol():
     assert isinstance(
-        FakeInputBackend(),
+        WindowsInputBackend(),
         InputBackend,
     )
 
 
-def test_startup_contract():
+def test_startup_backend_protocol():
     assert isinstance(
-        FakeStartupBackend(),
+        WindowsStartupBackend(),
         StartupBackend,
     )

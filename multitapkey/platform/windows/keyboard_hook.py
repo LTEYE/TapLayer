@@ -1,4 +1,4 @@
-"""WH_KEYBOARD_LL backend for Windows."""
+"""WH_KEYBOARD_LL backend for Windows (Chord-based triggers)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,10 @@ import queue
 import threading
 import time
 
+from multitapkey.core.chord import (
+    MAX_CHORD_KEYS,
+    chord_display,
+)
 from multitapkey.platform.base import (
     CaptureResult,
     RawKeyEvent,
@@ -35,7 +39,7 @@ HC_ACTION = 0
 LLKHF_INJECTED = 0x00000010
 
 # 捕获模式最多持续这么久；超时自动取消，避免界面卡住时永久吞掉所有按键。
-CAPTURE_TIMEOUT_S = 5.0
+CAPTURE_TIMEOUT_S = 30.0
 
 LRESULT = ctypes.c_ssize_t
 
@@ -103,14 +107,27 @@ class WindowsKeyboardBackend:
         self.events: queue.SimpleQueue = queue.SimpleQueue()
         self.init_error: int | None = None
 
-        self._trigger_vks: frozenset[int] = frozenset()
+        self._trigger_chords: frozenset[
+            tuple[str, ...]
+        ] = frozenset()
+        # 预计算的 (display, frozenset) 列表，保证匹配顺序稳定
+        self._triggers: list[
+            tuple[str, frozenset[str]]
+        ] = []
+
         self._enabled = False
 
         self._capture_mode = False
         self._capture_start = 0.0
+        self._capture_held: set[str] = set()
         self._capture_results: queue.SimpleQueue = queue.SimpleQueue()
 
         self._suppressed_down_vks: set[int] = set()
+
+        # 当前物理按下的键（规范名集合）
+        self._pressed: set[str] = set()
+        # 当前已激活的 trigger chord（display 集合）
+        self._active: set[str] = set()
 
         self._started = threading.Event()
 
@@ -123,26 +140,37 @@ class WindowsKeyboardBackend:
     # Public backend API
     # ------------------------------------------------------------------
 
-    def set_trigger_keys(
+    def set_trigger_chords(
         self,
-        keys: frozenset[str],
+        chords: frozenset[tuple[str, ...]],
     ) -> None:
-        mapped = frozenset(
-            key_to_vk(key)
-            for key in keys
+        self._trigger_chords = frozenset(
+            chords
         )
-        self._trigger_vks = mapped
+
+        self._triggers = sorted(
+            (
+                (
+                    chord_display(chord),
+                    frozenset(chord),
+                )
+                for chord in self._trigger_chords
+            ),
+            key=lambda item: item[0],
+        )
 
     def set_enabled(self, enabled: bool) -> None:
         self._enabled = bool(enabled)
 
     def begin_capture(self) -> None:
         self._capture_mode = True
+        self._capture_held.clear()
         self._capture_start = time.monotonic()
         self._drain_capture_results()
 
     def cancel_capture(self) -> None:
         self._capture_mode = False
+        self._capture_held.clear()
         self._suppressed_down_vks.clear()
         self._drain_capture_results()
         self._capture_results.put(
@@ -206,6 +234,9 @@ class WindowsKeyboardBackend:
 
         self._suppressed_down_vks.clear()
         self._capture_mode = False
+        self._capture_held.clear()
+        self._pressed.clear()
+        self._active.clear()
         self._drain_capture_results()
 
     # ------------------------------------------------------------------
@@ -330,50 +361,131 @@ class WindowsKeyboardBackend:
 
             vk = int(info.vkCode)
 
-            # 2. Existing suppression lifecycle takes priority
-            # over capture and trigger configuration.
-            if vk in self._suppressed_down_vks:
-                if is_up:
-                    self._suppressed_down_vks.discard(vk)
+            key = vk_to_key(vk)
 
-                    key = vk_to_key(vk)
+            if key is None:
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            # 2. Suppressed key lifecycle（单键触发键/录制捕获键）
+            if vk in self._suppressed_down_vks:
+                if is_down:
+                    # 按住期间的自动重复：继续拦截
+                    return 1
+
+                # is_up：释放拦截并同步 chord 状态
+                self._suppressed_down_vks.discard(vk)
+                self._capture_held.discard(key)
+                self._pressed.discard(key)
+                self._deactivate_affected(key)
+                return 1
+
+            # 3. Chord capture（录制器）
+            if self._capture_mode:
+                if is_down:
+                    if (
+                        time.monotonic()
+                        - self._capture_start
+                        > CAPTURE_TIMEOUT_S
+                    ):
+                        self.cancel_capture()
+                        return user32.CallNextHookEx(
+                            None,
+                            n_code,
+                            w_param,
+                            l_param,
+                        )
+
+                    if key in self._capture_held:
+                        # 同一键重复按下 / 自动重复：不产生重复项
+                        return 1
 
                     if (
-                        key is not None
-                        and self._enabled
-                        and vk in self._trigger_vks
+                        len(self._capture_held)
+                        >= MAX_CHORD_KEYS
                     ):
+                        return 1
+
+                    self._capture_held.add(key)
+                    self._suppressed_down_vks.add(vk)
+
+                    if key == "Esc":
+                        self._capture_mode = False
+                        self._capture_held.clear()
+                        self._capture_results.put(
+                            CaptureResult(
+                                kind="cancel"
+                            )
+                        )
+                        return 1
+
+                    self._capture_results.put(
+                        CaptureResult(
+                            kind="key",
+                            key=key,
+                        )
+                    )
+
+                    return 1
+
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            # 4. Trigger chord matching
+            if self._enabled:
+                if is_down:
+                    if key in self._pressed:
+                        # 自动重复：不产生重复 Trigger
+                        return user32.CallNextHookEx(
+                            None,
+                            n_code,
+                            w_param,
+                            l_param,
+                        )
+
+                    self._pressed.add(key)
+
+                    matched = (
+                        self._match_trigger_chord()
+                    )
+
+                    if matched is not None:
+                        display, chord_set = (
+                            matched
+                        )
+
+                        self._active.add(display)
+
                         self.events.put(
                             RawKeyEvent(
-                                key=key,
-                                is_down=False,
-                                injected=bool(
-                                    info.flags
-                                    & LLKHF_INJECTED
-                                ),
+                                key=display,
+                                is_down=True,
+                                injected=False,
                                 timestamp=time.monotonic(),
                             )
                         )
 
-                return 1
+                        if len(chord_set) == 1:
+                            # 单键触发：拦截该键，避免其到达目标窗口
+                            self._suppressed_down_vks.add(
+                                key_to_vk(
+                                    next(
+                                        iter(
+                                            chord_set
+                                        )
+                                    )
+                                )
+                            )
+                            return 1
 
-            # 3. Capture.
-            if (
-                self._capture_mode
-                and is_down
-                and not (
-                    info.flags
-                    & LLKHF_INJECTED
-                )
-            ):
-                # 超时保护：捕获卡住超过上限就自动取消，
-                # 绝不永久吞掉后续按键。
-                if (
-                    time.monotonic()
-                    - self._capture_start
-                    > CAPTURE_TIMEOUT_S
-                ):
-                    self.cancel_capture()
                     return user32.CallNextHookEx(
                         None,
                         n_code,
@@ -381,63 +493,16 @@ class WindowsKeyboardBackend:
                         l_param,
                     )
 
-                key = vk_to_key(vk)
+                # is_up
+                self._pressed.discard(key)
+                self._deactivate_affected(key)
 
-                if key is None:
-                    # 不认识的键无法绑定：直接放行，继续等待有效键。
-                    # 由上面的超时保护兜底，不会因无效键而永久卡死。
-                    return user32.CallNextHookEx(
-                        None,
-                        n_code,
-                        w_param,
-                        l_param,
-                    )
-
-                self._suppressed_down_vks.add(vk)
-
-                if key == "Esc":
-                    self._capture_mode = False
-                    self._capture_results.put(
-                        CaptureResult(
-                            kind="cancel"
-                        )
-                    )
-                    return 1
-
-                self._capture_mode = False
-                self._capture_results.put(
-                    CaptureResult(
-                        kind="key",
-                        key=key,
-                    )
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
                 )
-
-                return 1
-
-            # 4. Active trigger.
-            if (
-                self._enabled
-                and vk in self._trigger_vks
-                and is_down
-            ):
-                key = vk_to_key(vk)
-
-                if key is not None:
-                    self._suppressed_down_vks.add(vk)
-
-                    self.events.put(
-                        RawKeyEvent(
-                            key=key,
-                            is_down=True,
-                            injected=bool(
-                                info.flags
-                                & LLKHF_INJECTED
-                            ),
-                            timestamp=time.monotonic(),
-                        )
-                    )
-
-                    return 1
 
             # 5. Unhandled event.
             return user32.CallNextHookEx(
@@ -460,6 +525,61 @@ class WindowsKeyboardBackend:
                 )
             except Exception:
                 return 0
+
+    # ------------------------------------------------------------------
+    # Chord helpers
+    # ------------------------------------------------------------------
+
+    def _match_trigger_chord(
+        self,
+    ) -> tuple[
+        str,
+        frozenset[str],
+    ] | None:
+        pressed = frozenset(
+            self._pressed
+        )
+
+        for display, chord_set in (
+            self._triggers
+        ):
+            if (
+                chord_set == pressed
+                and display
+                not in self._active
+            ):
+                return (
+                    display,
+                    chord_set,
+                )
+
+        return None
+
+    def _deactivate_affected(
+        self,
+        released_key: str,
+    ) -> None:
+        for display, chord_set in (
+            self._triggers
+        ):
+            if (
+                display in self._active
+                and released_key
+                in chord_set
+                and not chord_set.issubset(
+                    self._pressed
+                )
+            ):
+                self._active.discard(display)
+
+                self.events.put(
+                    RawKeyEvent(
+                        key=display,
+                        is_down=False,
+                        injected=False,
+                        timestamp=time.monotonic(),
+                    )
+                )
 
     def _drain_capture_results(self) -> None:
         try:

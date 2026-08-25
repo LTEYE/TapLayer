@@ -26,7 +26,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from multitapkey.core.chord import (
+    chord_display,
+)
 from multitapkey.core.config_models import (
+    MAX_TAP_COUNT,
     Config,
     ConfigError,
     default_config,
@@ -39,8 +43,9 @@ from multitapkey.core.config_store import (
     save_config,
 )
 from multitapkey.i18n.manager import I18nManager
-from .capture import CaptureKeyDialog
+from .gesture_overlay import GestureOverlay
 from .help_dialog import HelpDialog
+from .key_chord_recorder import KeyChordRecorder
 
 
 class MainWindow(QMainWindow):
@@ -83,12 +88,24 @@ class MainWindow(QMainWindow):
         self._tr_buttons: dict = {}
         self._tray = None
 
+        # Chord 编辑器状态
+        self._trigger_chord: tuple[str, ...] = ()
+        self._gesture_widgets: dict = {}
+        self._add_tap_button = None
+
+        # OSD 浮层（默认关闭）
+        self._gesture_overlay = None
+
         self._build_ui()
 
         if config_error:
             self.show_config_error()
 
         self.refresh_all()
+
+        self._sync_gesture_overlay(
+            self._config.settings.enable_gesture_overlay
+        )
 
     # ------------------------------------------------------------------
     # UI construction
@@ -300,6 +317,16 @@ class MainWindow(QMainWindow):
             self._startup_changed
         )
 
+        self.overlayCheck = QCheckBox(
+            self.i18n.tr(
+                "settings.overlay"
+            )
+        )
+
+        self.overlayCheck.stateChanged.connect(
+            self._mark_editor_changed
+        )
+
         self.settings_layout.addRow(
             self.i18n.tr(
                 "settings.double_tap"
@@ -328,6 +355,13 @@ class MainWindow(QMainWindow):
             self.startupCheck,
         )
 
+        self.settings_layout.addRow(
+            self.i18n.tr(
+                "settings.overlay"
+            ),
+            self.overlayCheck,
+        )
+
         main_layout.addWidget(
             settings
         )
@@ -342,25 +376,25 @@ class MainWindow(QMainWindow):
             (
                 "button.test_single",
                 lambda: self._test_gesture(
-                    "single"
+                    "1"
                 ),
             ),
             (
                 "button.test_double",
                 lambda: self._test_gesture(
-                    "double"
+                    "2"
                 ),
             ),
             (
                 "button.test_triple",
                 lambda: self._test_gesture(
-                    "triple"
+                    "3"
                 ),
             ),
             (
                 "button.test_long",
                 lambda: self._test_gesture(
-                    "long"
+                    "hold"
                 ),
             ),
         ):
@@ -534,6 +568,10 @@ class MainWindow(QMainWindow):
         settings[
             "start_with_windows"
         ] = self.startupCheck.isChecked()
+
+        settings[
+            "enable_gesture_overlay"
+        ] = self.overlayCheck.isChecked()
 
         self._sync_current_binding()
 
@@ -730,51 +768,66 @@ class MainWindow(QMainWindow):
         self,
         binding: dict,
     ) -> str:
-        return self.i18n.tr(
-            "binding.summary",
-            trigger=binding[
-                "trigger"
-            ],
-            single=self._action_summary(
-                binding["single"]
-            ),
-            double=self._action_summary(
-                binding["double"]
-            ),
-            triple=self._action_summary(
-                binding["triple"]
-            ),
-            long=self._action_summary(
-                binding["long"]
-            ),
+        trigger_action = binding[
+            "trigger"
+        ]
+
+        trigger = chord_display(
+            trigger_action.get(
+                "keys",
+                [],
+            )
+        )
+
+        gestures = binding[
+            "gestures"
+        ]
+
+        parts = []
+
+        taps = gestures.get(
+            "taps",
+            {},
+        )
+
+        for raw_count in sorted(
+            taps,
+            key=int,
+        ):
+            parts.append(
+                f"{raw_count}:"
+                f"{self._action_summary(taps[raw_count])}"
+            )
+
+        parts.append(
+            "H:"
+            + self._action_summary(
+                gestures.get(
+                    "hold",
+                    {},
+                )
+            )
+        )
+
+        return (
+            f"{trigger} → {' '.join(parts)}"
         )
 
     def _action_summary(
         self,
         action: dict,
     ) -> str:
-        if action["type"] == "disabled":
+        if action.get("type") != "chord":
             return self.i18n.tr(
                 "binding.disabled"
             )
 
-        modifiers = action[
-            "modifiers"
-        ]
-
-        if modifiers:
-            return (
-                "+".join(
-                    modifiers
-                    + [
-                        action[
-                            "key"
-                        ]
-                    ]
-                )
+        return chord_display(
+            action.get(
+                "keys",
+                [],
             )
-
-        return action["key"]
+        )
 
     def _binding_selected(
         self,
@@ -826,6 +879,9 @@ class MainWindow(QMainWindow):
             )
         )
 
+        self._gesture_widgets = {}
+        self._trigger_chord = ()
+
     def _clear_layout(
         self,
         layout,
@@ -859,13 +915,21 @@ class MainWindow(QMainWindow):
             binding["enabled"]
         )
 
-        self._trigger_button = QPushButton(
-            binding["trigger"]
+        trigger_action = binding[
+            "trigger"
+        ]
+        self._trigger_chord = tuple(
+            trigger_action.get(
+                "keys",
+                [],
+            )
         )
 
+        self._trigger_button = QPushButton()
         self._trigger_button.clicked.connect(
-            self._capture_trigger
+            self._record_trigger
         )
+        self._update_trigger_button()
 
         top = QFormLayout()
 
@@ -889,186 +953,308 @@ class MainWindow(QMainWindow):
 
         self._enabled_widget = enabled
 
-        self._action_widgets = {}
+        self._gesture_widgets = {}
 
-        for gesture in (
-            "single",
-            "double",
-            "triple",
-            "long",
+        gestures = binding["gestures"]
+
+        taps = gestures.get(
+            "taps",
+            {},
+        )
+
+        for raw_count in sorted(
+            taps,
+            key=int,
         ):
-            group = self._build_action_editor(
-                gesture,
-                binding[gesture],
+            group = self._build_gesture_group(
+                raw_count,
+                self.i18n.tr(
+                    "gesture.tap",
+                    count=raw_count,
+                ),
+                taps[raw_count],
             )
             self.editor_layout.addWidget(
                 group
             )
 
+        hold_group = self._build_gesture_group(
+            "hold",
+            self.i18n.tr(
+                "gesture.hold"
+            ),
+            gestures.get(
+                "hold",
+                {
+                    "type": "disabled",
+                    "keys": [],
+                },
+            ),
+        )
+        self.editor_layout.addWidget(
+            hold_group
+        )
+
+        self._add_tap_button = QPushButton(
+            self.i18n.tr(
+                "binding.add_tap"
+            )
+        )
+        self._add_tap_button.clicked.connect(
+            self._add_tap_level
+        )
+        self._update_add_tap_state(
+            taps
+        )
+        self.editor_layout.addWidget(
+            self._add_tap_button
+        )
+
         self._mark_editor_changed()
 
-    def _build_action_editor(
+    def _build_gesture_group(
         self,
-        gesture: str,
+        key: str,
+        title: str,
         action: dict,
     ) -> QGroupBox:
         group = QGroupBox(
-            self.i18n.tr(
-                f"gesture.{gesture}"
-            )
+            title
         )
 
         layout = QVBoxLayout(
             group
         )
 
-        type_combo = QComboBox()
-
-        type_combo.addItem(
+        disabled = QCheckBox(
             self.i18n.tr(
-                "action.disabled"
-            ),
-            "disabled",
-        )
-
-        type_combo.addItem(
-            self.i18n.tr(
-                "action.key"
-            ),
-            "key",
-        )
-
-        index = type_combo.findData(
-            action["type"]
-        )
-
-        type_combo.setCurrentIndex(
-            max(index, 0)
-        )
-
-        key_button = QPushButton()
-
-        key_button.setProperty(
-            "key_name",
-            action.get("key")
-        )
-
-        key_button.setText(
-            action.get("key")
-            or self.i18n.tr(
-                "action.capture"
+                "binding.disabled"
             )
         )
 
-        modifier_checks = {}
-
-        modifier_row = QHBoxLayout()
-
-        for modifier in (
-            "Ctrl",
-            "Shift",
-            "Alt",
-            "Win",
-        ):
-            check = QCheckBox(
-                modifier
-            )
-
-            check.setChecked(
-                modifier
-                in action.get(
-                    "modifiers",
-                    [],
-                )
-            )
-
-            modifier_checks[
-                modifier
-            ] = check
-
-            modifier_row.addWidget(
-                check
-            )
-
-        layout.addWidget(
-            type_combo
-        )
-        layout.addWidget(
-            key_button
-        )
-        layout.addLayout(
-            modifier_row
+        disabled.setChecked(
+            action.get("type")
+            != "chord"
         )
 
-        self._action_widgets[
-            gesture
-        ] = {
-            "type": type_combo,
-            "key": key_button,
-            "modifiers": modifier_checks,
+        chord = tuple(
+            action.get(
+                "keys",
+                [],
+            )
+        ) if (
+            action.get("type")
+            == "chord"
+        ) else ()
+
+        button = QPushButton()
+
+        button.clicked.connect(
+            lambda _checked=False,
+            k=key:
+            self._record_gesture(k)
+        )
+
+        self._gesture_widgets[key] = {
+            "disabled": disabled,
+            "button": button,
+            "chord": chord,
         }
 
-        type_combo.currentIndexChanged.connect(
-            self._action_type_changed
+        disabled.stateChanged.connect(
+            self._toggle_gesture
         )
-
-        key_button.clicked.connect(
-            lambda _checked=False,
-            g=gesture:
-            self._capture_action(
-                g
-            )
-        )
-
-        for check in modifier_checks.values():
-            check.stateChanged.connect(
-                self._mark_editor_changed
-            )
-
-        type_combo.currentIndexChanged.connect(
+        disabled.stateChanged.connect(
             self._mark_editor_changed
         )
 
-        self._update_action_editor_state(
-            gesture
+        layout.addWidget(
+            disabled
+        )
+        layout.addWidget(
+            button
+        )
+
+        self._update_gesture_widget_state(
+            key
         )
 
         return group
 
-    def _action_type_changed(
+    def _update_gesture_widget_state(
         self,
-        _index: int,
+        key: str,
     ) -> None:
-        for gesture in self._action_widgets:
-            self._update_action_editor_state(
-                gesture
+        widgets = self._gesture_widgets[
+            key
+        ]
+
+        chord = widgets["chord"]
+        disabled = (
+            widgets["disabled"].isChecked()
+        )
+        button = widgets["button"]
+
+        if disabled or not chord:
+            button.setText(
+                self.i18n.tr(
+                    "action.select"
+                )
             )
+            button.setEnabled(
+                not disabled
+            )
+        else:
+            button.setText(
+                chord_display(chord)
+            )
+            button.setEnabled(True)
+
+    def _toggle_gesture(
+        self,
+        *_args,
+    ) -> None:
+        for key in self._gesture_widgets:
+            self._update_gesture_widget_state(
+                key
+            )
+
+    def _update_add_tap_state(
+        self,
+        taps: dict,
+    ) -> None:
+        count = max(
+            (
+                int(raw)
+                for raw in taps
+            ),
+            default=0,
+        )
+
+        self._add_tap_button.setEnabled(
+            count < MAX_TAP_COUNT
+        )
+
+    def _add_tap_level(
+        self,
+    ) -> None:
+        self._sync_controls_to_working()
+
+        if (
+            self._current_binding_index
+            is None
+        ):
+            return
+
+        binding = self._working_profile()[
+            "bindings"
+        ][
+            self._current_binding_index
+        ]
+
+        taps = binding[
+            "gestures"
+        ]["taps"]
+
+        count = max(
+            (
+                int(raw)
+                for raw in taps
+            ),
+            default=0,
+        )
+
+        if count >= MAX_TAP_COUNT:
+            QMessageBox.information(
+                self,
+                self.i18n.tr(
+                    "binding.editor"
+                ),
+                self.i18n.tr(
+                    "binding.max_taps"
+                ),
+            )
+            return
+
+        taps[str(count + 1)] = {
+            "type": "disabled",
+            "keys": [],
+        }
+
+        self._load_binding_editor(
+            binding
+        )
 
         self._mark_editor_changed()
 
-    def _update_action_editor_state(
+    def _record_chord(
         self,
-        gesture: str,
+    ):
+        dialog = KeyChordRecorder(
+            self.engine.backend,
+            self.i18n,
+            self,
+        )
+
+        if (
+            dialog.exec()
+            == QDialog.DialogCode.Accepted
+        ):
+            return dialog.keys
+
+        return None
+
+    def _update_trigger_button(
+        self,
     ) -> None:
-        widgets = self._action_widgets[
-            gesture
+        if self._trigger_chord:
+            self._trigger_button.setText(
+                chord_display(
+                    self._trigger_chord
+                )
+            )
+        else:
+            self._trigger_button.setText(
+                self.i18n.tr(
+                    "action.select"
+                )
+            )
+
+    def _record_trigger(
+        self,
+    ) -> None:
+        chord = self._record_chord()
+
+        if chord is None:
+            return
+
+        self._trigger_chord = chord
+        self._update_trigger_button()
+        self._mark_editor_changed()
+
+    def _record_gesture(
+        self,
+        key: str,
+    ) -> None:
+        chord = self._record_chord()
+
+        if chord is None:
+            return
+
+        widgets = self._gesture_widgets[
+            key
         ]
 
-        enabled = (
-            widgets["type"].currentData()
-            == "key"
+        widgets["chord"] = chord
+        widgets["disabled"].setChecked(
+            False
         )
 
-        widgets["key"].setEnabled(
-            enabled
+        self._update_gesture_widget_state(
+            key
         )
 
-        for check in widgets[
-            "modifiers"
-        ].values():
-            check.setEnabled(
-                enabled
-            )
+        self._mark_editor_changed()
 
     def _mark_editor_changed(
         self,
@@ -1082,7 +1268,7 @@ class MainWindow(QMainWindow):
         if (
             self._current_binding_index
             is None
-            or not self._action_widgets
+            or not self._gesture_widgets
         ):
             return
 
@@ -1107,45 +1293,40 @@ class MainWindow(QMainWindow):
             "enabled"
         ] = self._enabled_widget.isChecked()
 
-        binding[
-            "trigger"
-        ] = self._trigger_button.text()
+        binding["trigger"] = {
+            "type": "chord",
+            "keys": list(
+                self._trigger_chord
+            ),
+        }
 
-        for gesture, widgets in (
-            self._action_widgets.items()
+        gestures = binding[
+            "gestures"
+        ]
+
+        for key, widgets in (
+            self._gesture_widgets.items()
         ):
-            action_type = widgets[
-                "type"
-            ].currentData()
-
-            if action_type == "disabled":
-                binding[gesture] = {
-                    "type": "disabled",
-                    "key": None,
-                    "modifiers": [],
-                }
-                continue
-
-            key = widgets[
-                "key"
-            ].property(
-                "key_name"
+            chord = widgets["chord"]
+            disabled = (
+                widgets["disabled"].isChecked()
             )
 
-            modifiers = [
-                modifier
-                for modifier, check
-                in widgets[
-                    "modifiers"
-                ].items()
-                if check.isChecked()
-            ]
+            if disabled or not chord:
+                action = {
+                    "type": "disabled",
+                    "keys": [],
+                }
+            else:
+                action = {
+                    "type": "chord",
+                    "keys": list(chord),
+                }
 
-            binding[gesture] = {
-                "type": "key",
-                "key": key,
-                "modifiers": modifiers,
-            }
+            if key == "hold":
+                gestures["hold"] = action
+            else:
+                gestures["taps"][key] = action
 
         self.bindingList.blockSignals(
             True
@@ -1169,59 +1350,8 @@ class MainWindow(QMainWindow):
         )
 
     # ------------------------------------------------------------------
-    # Capture
+    # Chord recording (KeyChordRecorder, shared by trigger & action)
     # ------------------------------------------------------------------
-
-    def _capture_with_dialog(
-        self,
-    ) -> str | None:
-        dialog = CaptureKeyDialog(
-            self.engine.backend,
-            self.i18n,
-            self,
-        )
-
-        if (
-            dialog.exec()
-            == QDialog.DialogCode.Accepted
-        ):
-            return dialog.result_key
-
-        return None
-
-    def _capture_trigger(
-        self,
-    ) -> None:
-        key = self._capture_with_dialog()
-
-        if key is None:
-            return
-
-        self._trigger_button.setText(
-            key
-        )
-
-    def _capture_action(
-        self,
-        gesture: str,
-    ) -> None:
-        key = self._capture_with_dialog()
-
-        if key is None:
-            return
-
-        button = self._action_widgets[
-            gesture
-        ]["key"]
-
-        button.setProperty(
-            "key_name",
-            key,
-        )
-
-        button.setText(
-            key
-        )
 
     # ------------------------------------------------------------------
     # Binding operations
@@ -1235,9 +1365,14 @@ class MainWindow(QMainWindow):
         profile = self._working_profile()
 
         used = {
-            binding[
-                "trigger"
-            ]
+            tuple(
+                binding[
+                    "trigger"
+                ].get(
+                    "keys",
+                    [],
+                )
+            )
             for binding in profile[
                 "bindings"
             ]
@@ -1252,7 +1387,7 @@ class MainWindow(QMainWindow):
                     "F22",
                     "F21",
                 )
-                if key not in used
+                if (key,) not in used
             ),
             None,
         )
@@ -1271,28 +1406,30 @@ class MainWindow(QMainWindow):
 
         disabled = {
             "type": "disabled",
-            "key": None,
-            "modifiers": [],
+            "keys": [],
         }
 
         profile[
             "bindings"
         ].append(
             {
-                "trigger": default_trigger,
+                "trigger": {
+                    "type": "chord",
+                    "keys": [
+                        default_trigger
+                    ],
+                },
                 "enabled": True,
-                "single": copy.deepcopy(
-                    disabled
-                ),
-                "double": copy.deepcopy(
-                    disabled
-                ),
-                "triple": copy.deepcopy(
-                    disabled
-                ),
-                "long": copy.deepcopy(
-                    disabled
-                ),
+                "gestures": {
+                    "taps": {
+                        "1": copy.deepcopy(
+                            disabled
+                        ),
+                    },
+                    "hold": copy.deepcopy(
+                        disabled
+                    ),
+                },
             }
         )
 
@@ -1391,6 +1528,20 @@ class MainWindow(QMainWindow):
         )
 
         self.startupCheck.blockSignals(
+            False
+        )
+
+        self.overlayCheck.blockSignals(
+            True
+        )
+
+        self.overlayCheck.setChecked(
+            settings[
+                "enable_gesture_overlay"
+            ]
+        )
+
+        self.overlayCheck.blockSignals(
             False
         )
 
@@ -1496,6 +1647,38 @@ class MainWindow(QMainWindow):
             if self._tray is not None:
                 self._tray.refresh()
 
+        self._sync_gesture_overlay(
+            new_config.settings.enable_gesture_overlay
+        )
+
+    # ------------------------------------------------------------------
+    # Gesture overlay (OSD)
+    # ------------------------------------------------------------------
+
+    def _sync_gesture_overlay(
+        self,
+        enabled: bool,
+    ) -> None:
+        if enabled:
+            if self._gesture_overlay is None:
+                self._gesture_overlay = (
+                    GestureOverlay()
+                )
+
+            self.engine.set_gesture_observer(
+                self._gesture_overlay.show_gesture
+            )
+            return
+
+        self.engine.set_gesture_observer(
+            None
+        )
+
+        if self._gesture_overlay is not None:
+            self._gesture_overlay.hide()
+            self._gesture_overlay.deleteLater()
+            self._gesture_overlay = None
+
     # ------------------------------------------------------------------
     # Language / help
     # ------------------------------------------------------------------
@@ -1578,6 +1761,9 @@ class MainWindow(QMainWindow):
             ),
             self.startupCheck: (
                 "settings.startup"
+            ),
+            self.overlayCheck: (
+                "settings.overlay"
             ),
         }
 
@@ -1769,26 +1955,39 @@ class MainWindow(QMainWindow):
             self._current_binding_index
         ]
 
-        self.engine.execute_action_spec(
-            self._action_from_dict(
-                binding[gesture]
-            )
-        )
+        gestures = binding[
+            "gestures"
+        ]
 
-    @staticmethod
-    def _action_from_dict(
-        data: dict,
-    ):
+        if gesture == "hold":
+            action = gestures.get(
+                "hold"
+            )
+        else:
+            action = gestures.get(
+                "taps",
+                {},
+            ).get(
+                gesture
+            )
+
+        if action is None:
+            return
+
         from multitapkey.core.config_models import (
             ActionSpec,
         )
 
-        return ActionSpec(
-            type=data["type"],
-            key=data["key"],
-            modifiers=tuple(
-                data["modifiers"]
-            ),
+        self.engine.execute_action_spec(
+            ActionSpec(
+                type=action["type"],
+                keys=tuple(
+                    action.get(
+                        "keys",
+                        [],
+                    )
+                ),
+            )
         )
 
     # ------------------------------------------------------------------

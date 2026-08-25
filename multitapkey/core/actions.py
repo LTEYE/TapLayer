@@ -1,4 +1,4 @@
-"""Core action model."""
+"""Core action model (Chord-based)."""
 
 from __future__ import annotations
 
@@ -8,9 +8,8 @@ from typing import Callable
 
 @dataclass(frozen=True, slots=True)
 class Action:
-    kind: str
-    key: str | None = None
-    modifiers: tuple[str, ...] = ()
+    kind: str  # "chord" | "disabled"
+    keys: tuple[str, ...] = ()
 
 
 NO_ACTION = Action(
@@ -21,29 +20,21 @@ NO_ACTION = Action(
 class ActionDispatcher:
     def __init__(
         self,
-        tap: Callable[[str], None],
-        combo: Callable[
-            [tuple[str, ...], str],
+        chord: Callable[
+            [tuple[str, ...]],
             None,
         ],
     ) -> None:
-        self._tap = tap
-        self._combo = combo
+        self._chord = chord
 
     def execute(
         self,
         action: Action,
     ) -> None:
-        if action.kind != "key":
+        if action.kind != "chord":
             return
 
-        if action.key is None:
+        if not action.keys:
             return
 
-        if action.modifiers:
-            self._combo(
-                action.modifiers,
-                action.key,
-            )
-        else:
-            self._tap(action.key)
+        self._chord(action.keys)

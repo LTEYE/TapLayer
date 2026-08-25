@@ -4,13 +4,14 @@ from multitapkey.core.state_machine import (
 )
 
 
-def make():
+def make(max_taps=3):
     fired = []
 
     machine = TapStateMachine(
         trigger_key="F24",
         double_tap_interval_ms=250,
         hold_threshold_ms=500,
+        max_taps=max_taps,
         on_gesture=fired.append,
     )
 
@@ -98,6 +99,49 @@ def test_triple_fires_immediately():
     ]
 
 
+def test_fourth_tap_fires_immediately():
+    machine, fired = make(max_taps=4)
+
+    for t in (0, 150, 300, 450):
+        press(machine, t)
+        release(machine, t + 60)
+
+    assert fired == [
+        Gesture.TAP4
+    ]
+
+
+def test_fifth_tap_fires_immediately():
+    machine, fired = make(max_taps=5)
+
+    for t in (0, 150, 300, 450, 600):
+        press(machine, t)
+        release(machine, t + 60)
+
+    assert fired == [
+        Gesture.TAP5
+    ]
+
+
+def test_tap_beyond_max_starts_new_sequence():
+    machine, fired = make(max_taps=3)
+
+    for t in (0, 150, 300):
+        press(machine, t)
+        release(machine, t + 60)
+
+    # 3 击已立即触发；第 4 击为新一轮
+    press(machine, 800)
+    release(machine, 850)
+
+    tick(machine, 1200)
+
+    assert fired == [
+        Gesture.TRIPLE,
+        Gesture.SINGLE,
+    ]
+
+
 def test_long_press_fires_once():
     machine, fired = make()
 
@@ -147,8 +191,8 @@ def test_release_before_threshold():
     ]
 
 
-def test_fourth_tap_starts_new_sequence():
-    machine, fired = make()
+def test_fourth_tap_starts_new_sequence_when_slow():
+    machine, fired = make(max_taps=4)
 
     press(machine, 0)
     release(machine, 60)
@@ -159,6 +203,7 @@ def test_fourth_tap_starts_new_sequence():
     press(machine, 300)
     release(machine, 360)
 
+    # 第 4 击来得太慢，超出双击窗口：前 3 击先结算
     press(machine, 800)
     release(machine, 850)
 

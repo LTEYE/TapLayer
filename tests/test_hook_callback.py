@@ -1,19 +1,14 @@
-"""Windows 键盘钩子回调的真实行为测试。
-
-防复发背景：回调内曾用 `l_param.contents` 直接取按键信息，
-但该参数在真实运行时是整数，导致每次按键都抛 AttributeError——
-旧版因此锁死键盘，修复后因异常被兜住而表现为“捕获没反应”。
-本测试直接调用真实回调逻辑，防止此类问题再次漏网。
-"""
+"""Windows 键盘钩子回调的真实行为测试（Chord 版）。"""
 
 import ctypes
 import time
+
+import pytest
 
 from multitapkey.platform.windows import keyboard_hook as kh
 
 
 def _lparam(vk: int, flags: int = 0, extra: int = 0) -> int:
-    """构造与真实 Windows 回调一致的整数地址参数。"""
     kbd = kh.KBDLLHOOKSTRUCT()
     kbd.vkCode = vk
     kbd.scanCode = 0
@@ -26,48 +21,97 @@ def _lparam(vk: int, flags: int = 0, extra: int = 0) -> int:
     ).value
 
 
-def test_capture_reads_key_info() -> None:
-    backend = kh.WindowsKeyboardBackend()
-    backend.begin_capture()
-
-    result = backend._proc_callback(
+def _down(backend, key: str, vk: int):
+    return backend._proc_callback(
         0,
         kh.WM_KEYDOWN,
-        _lparam(0x41),
+        _lparam(vk),
     )
 
-    # 捕获模式下按下 A：应拦截（返回 1）、退出捕获、产出 key='A'
-    assert result == 1
-    assert backend._capture_mode is False
 
-    captured = backend.poll_capture_result()
-    assert captured is not None
-    assert captured.kind == "key"
-    assert captured.key == "A"
-
-
-def test_capture_releases_on_keyup() -> None:
-    backend = kh.WindowsKeyboardBackend()
-    backend.begin_capture()
-    backend._proc_callback(
-        0,
-        kh.WM_KEYDOWN,
-        _lparam(0x41),
-    )
-    assert backend._suppressed_down_vks
-
-    result = backend._proc_callback(
+def _up(backend, key: str, vk: int):
+    return backend._proc_callback(
         0,
         kh.WM_KEYUP,
-        _lparam(0x41),
+        _lparam(vk),
     )
 
-    # 松开被拦截的键：仍拦截且必须从集合中释放
-    assert result == 1
-    assert backend._suppressed_down_vks == set()
+
+def _next_event(backend):
+    return backend.events.get_nowait()
 
 
-def test_capture_timeout_auto_cancels() -> None:
+# ----------------------------------------------------------------------
+# Chord capture（录制器用）
+# ----------------------------------------------------------------------
+
+def test_capture_reads_multiple_keys():
+    backend = kh.WindowsKeyboardBackend()
+    backend.begin_capture()
+
+    assert (
+        _down(backend, "A", 0x41) == 1
+    )
+    assert (
+        _down(backend, "S", 0x53) == 1
+    )
+
+    results = []
+    while True:
+        result = backend.poll_capture_result()
+        if result is None:
+            break
+        results.append(result.key)
+
+    assert sorted(results) == [
+        "A",
+        "S",
+    ]
+
+
+def test_capture_auto_repeat_ignored():
+    backend = kh.WindowsKeyboardBackend()
+    backend.begin_capture()
+
+    _down(backend, "A", 0x41)
+    # 按住期间自动重复：不再产生结果
+    _down(backend, "A", 0x41)
+
+    results = []
+    while True:
+        result = backend.poll_capture_result()
+        if result is None:
+            break
+        results.append(result.key)
+
+    assert results == ["A"]
+
+
+def test_capture_esc_cancels():
+    backend = kh.WindowsKeyboardBackend()
+    backend.begin_capture()
+
+    _down(backend, "Esc", 0x1B)
+
+    result = backend.poll_capture_result()
+
+    assert result is not None
+    assert result.kind == "cancel"
+
+
+def test_capture_cancel_clears_suppression():
+    backend = kh.WindowsKeyboardBackend()
+    backend.begin_capture()
+
+    _down(backend, "A", 0x41)
+    assert backend._suppressed_down_vks
+
+    backend.cancel_capture()
+
+    assert not backend._suppressed_down_vks
+
+
+def test_capture_timeout_auto_cancels():
     backend = kh.WindowsKeyboardBackend()
     backend.begin_capture()
     backend._capture_start = (
@@ -76,24 +120,127 @@ def test_capture_timeout_auto_cancels() -> None:
         - 1
     )
 
-    result = backend._proc_callback(
-        0,
-        kh.WM_KEYDOWN,
-        _lparam(0x41),
-    )
+    result = _down(backend, "A", 0x41)
 
-    # 超时后：放行（返回 0）且自动退出捕获，绝不永久吞键
-    assert result == 0
+    assert result == 0  # 放行
     assert backend._capture_mode is False
 
 
-def test_normal_key_passes_through() -> None:
+# ----------------------------------------------------------------------
+# Trigger chord matching（触发端）
+# ----------------------------------------------------------------------
+
+def test_single_key_trigger_suppressed():
     backend = kh.WindowsKeyboardBackend()
+    backend.set_trigger_chords(
+        frozenset({("F24",)})
+    )
+    backend.set_enabled(True)
+
+    result = _down(backend, "F24", 0x87)
+
+    assert result == 1  # 单键触发被拦截
+
+    event = _next_event(backend)
+    assert event.key == "F24"
+    assert event.is_down is True
+
+    result = _up(backend, "F24", 0x87)
+    assert result == 1
+
+    event = _next_event(backend)
+    assert event.key == "F24"
+    assert event.is_down is False
+
+
+def test_multi_key_chord_matches():
+    backend = kh.WindowsKeyboardBackend()
+    backend.set_trigger_chords(
+        frozenset({("A", "S")})
+    )
+    backend.set_enabled(True)
+
+    # 按 A：未成组合，放行
+    assert _down(backend, "A", 0x41) == 0
+
+    # 按 S：组合完成，触发
+    assert _down(backend, "S", 0x53) == 0
+
+    event = _next_event(backend)
+    assert event.key == "A + S"
+    assert event.is_down is True
+
+    # 松开 A：组合解除
+    _up(backend, "A", 0x41)
+
+    event = _next_event(backend)
+    assert event.key == "A + S"
+    assert event.is_down is False
+
+
+def test_chord_order_does_not_matter():
+    backend = kh.WindowsKeyboardBackend()
+    backend.set_trigger_chords(
+        frozenset({("A", "S")})
+    )
+    backend.set_enabled(True)
+
+    # 反序按下：先 S 后 A
+    assert _down(backend, "S", 0x53) == 0
+    assert _down(backend, "A", 0x41) == 0
+
+    event = _next_event(backend)
+    assert event.key == "A + S"
+
+
+def test_chord_auto_repeat_no_duplicate_trigger():
+    backend = kh.WindowsKeyboardBackend()
+    backend.set_trigger_chords(
+        frozenset({("A", "S")})
+    )
+    backend.set_enabled(True)
+
+    _down(backend, "A", 0x41)
+    _down(backend, "S", 0x53)
+    _down(backend, "S", 0x53)  # S 自动重复
+
+    events = []
+    while not backend.events.empty():
+        events.append(
+            backend.events.get_nowait()
+        )
+
+    downs = [
+        e for e in events if e.is_down
+    ]
+
+    assert len(downs) == 1
+
+
+def test_normal_key_passes_through():
+    backend = kh.WindowsKeyboardBackend()
+    backend.set_enabled(True)
+
+    result = _down(backend, "B", 0x42)
+
+    assert result == 0
+
+
+def test_injected_key_never_interpreted():
+    backend = kh.WindowsKeyboardBackend()
+    backend.set_trigger_chords(
+        frozenset({("F24",)})
+    )
+    backend.set_enabled(True)
+
     result = backend._proc_callback(
         0,
         kh.WM_KEYDOWN,
-        _lparam(0x42),
+        _lparam(
+            0x87,
+            extra=kh.INJECTED_MARKER,
+        ),
     )
 
-    # 非捕获、非触发状态的普通按键：必须放行
     assert result == 0
+    assert backend.events.empty()

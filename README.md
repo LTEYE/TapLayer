@@ -126,30 +126,52 @@ From the project root:
 
 Configuration lives at `%APPDATA%\MultiTapKey\config.json`. It is saved atomically (write to a `.tmp` file, flush, `fsync`, then `os.replace`).
 
+**Schema v2 (breaking).** The old `{"type": "key", "key": ..., "modifiers": [...]}` action model is removed. Old v1 configuration files are **not** migrated: if a config has an unsupported version, MultiTapKey reports a configuration error and keeps the current runtime configuration — it never silently converts.
+
 If the file is missing, a default configuration is created on first run. If the file is corrupt, MultiTapKey reports a configuration error and does **not** silently fall back to defaults.
 
 ## Profile
 
-v0.1 ships three profiles:
+v0.1 ships three profiles (each with the default F24 binding):
 
 ```text
-default   -> F24 single=F23, double=F24, triple=F22, long=F21
-Gaming    -> (empty)
-Work      -> (empty)
+default -> F24: 1tap=F23, 2tap=F24, 3tap=F22, 4tap=F21, hold=F21
+Gaming  -> (same default binding)
+Work    -> (same default binding)
 ```
 
 Only switching profiles is supported in v0.1 (no add / delete / rename).
 
 ## 手势 (Gestures)
 
-| Gesture     | Default output |
-|-------------|----------------|
-| Single tap  | F23            |
-| Double tap  | F24            |
-| Triple tap  | F22            |
-| Long press  | F21            |
+| Gesture         | Default output |
+|-----------------|----------------|
+| 1 tap           | F23            |
+| 2 taps          | F24            |
+| 3 taps          | F22            |
+| 4 taps          | F21            |
+| Hold (long)     | F21            |
 
-A long press takes priority: if a press crosses the hold threshold, only `LONG` is produced. A fourth tap after a triple starts a new sequence.
+Tap levels are dynamic: each binding can define 1..9 tap levels (click "+ 添加连击级别" in the editor). A long press takes priority: if a press crosses the hold threshold, only `HOLD` is produced.
+
+## Chord model (v0.2 architecture)
+
+MultiTapKey uses a unified **Chord** input model. A chord is a set of simultaneously held keys:
+
+```text
+A                 (single key = chord of length 1)
+Ctrl + A
+Ctrl + Shift + A
+A + S
+A + S + D
+```
+
+- Both **triggers** and **actions** are chords (`{"type": "chord", "keys": ["Ctrl", "A"]}`).
+- Chord order is canonicalized at runtime: `S + A` and `A + S` are the same chord; left/right modifiers are normalized; duplicates are removed.
+- Duplicate triggers (e.g. `A+S` and `S+A`) are rejected at configuration load.
+- A chord trigger activates when the pressed-key set equals the chord, and deactivates when any member key is released. Auto-repeat never produces duplicate triggers.
+- Actions are injected as a chord: all keys go down in order, then all keys come up in reverse; every key that went down is always released, even on error. Chords never interleave.
+- `Sequence` (A → S) is **not** part of this release; only `Chord` is implemented.
 
 ## 暂停 (Pause)
 

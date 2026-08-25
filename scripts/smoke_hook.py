@@ -19,9 +19,9 @@ def main():
         )
         sys.exit(1)
 
-    backend.set_trigger_keys(
+    backend.set_trigger_chords(
         frozenset(
-            {"F24"}
+            {("F24",)}
         )
     )
 
