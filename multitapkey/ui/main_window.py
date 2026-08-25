@@ -54,6 +54,13 @@ from .key_chord_recorder import KeyChordRecorder
 
 log = logging.getLogger(__name__)
 
+# 内置配置档名 → i18n 键（显示汉化，数据/引擎仍用原名）
+_PROFILE_NAME_KEYS = {
+    "default": "profile.name.default",
+    "Gaming": "profile.name.Gaming",
+    "Work": "profile.name.Work",
+}
+
 
 class MainWindow(QMainWindow):
     def __init__(
@@ -144,22 +151,36 @@ class MainWindow(QMainWindow):
 
         self.setStyleSheet(
             "#statusLabel, #dirtyLabel { font-weight: 500; }"
-            "#bindingList { background: transparent; border: none; }"
-            "#bindingList::item { border: none; background: transparent; }"
-            "QScrollArea { border: none; background: transparent; }"
+            "#bindingList { background: #FFFFFF; border: none; }"
+            "#bindingList::item { border: none; background: #FFFFFF; }"
+            "QScrollArea { border: none; background: #FFFFFF; }"
+            "QScrollArea > QWidget > QWidget { background: #FFFFFF; }"
+            "#bindingEditor, #settings_group, QGroupBox {"
+            " background: #FFFFFF; border: 0.5px solid #D3D1C7;"
+            " border-radius: 8px; margin-top: 6px; }"
             "#bindingCard { background: #FFFFFF;"
             " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
             "#bindingCard[selected=\"true\"] { background: #E6F1FB;"
             " border: 0.5px solid #185FA5; }"
             "#bindingCardName { font-size: 13px; font-weight: 500;"
-            " color: #2C2C2A; }"
-            "#bindingCardSummary { font-size: 12px; color: #5F5E5A; }"
+            " color: #2C2C2A; background: transparent; }"
+            "#bindingCardSummary { font-size: 12px; color: #5F5E5A;"
+            " background: transparent; }"
             "#gestureCard { background: #FFFFFF;"
             " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
-            "#gestureName { font-size: 12px; color: #5F5E5A; }"
+            "#gestureName { font-size: 12px; color: #5F5E5A;"
+            " background: transparent; }"
             "#gestureValue { font-size: 13px; font-weight: 500;"
-            " color: #2C2C2A; }"
-            "#gestureParam { font-size: 11px; color: #888780; }"
+            " color: #2C2C2A; background: transparent; }"
+            "#gestureParam { font-size: 11px; color: #888780;"
+            " background: transparent; }"
+            "QComboBox, QSpinBox, QCheckBox { background: #FFFFFF;"
+            " color: #2C2C2A; border: 0.5px solid #D3D1C7;"
+            " border-radius: 4px; }"
+            "QPushButton { background: #FFFFFF; color: #2C2C2A;"
+            " border: 0.5px solid #D3D1C7; border-radius: 4px;"
+            " padding: 3px 10px; }"
+            "QPushButton:hover { background: #F1EFE8; }"
         )
 
         self.resize(
@@ -223,7 +244,7 @@ class MainWindow(QMainWindow):
             "profileCombo"
         )
 
-        self.profileCombo.currentTextChanged.connect(
+        self.profileCombo.currentIndexChanged.connect(
             self._profile_changed
         )
 
@@ -348,6 +369,9 @@ class MainWindow(QMainWindow):
             self.i18n.tr(
                 "settings.group"
             )
+        )
+        settings.setObjectName(
+            "settings_group"
         )
 
         self._settings_group = settings
@@ -720,7 +744,9 @@ class MainWindow(QMainWindow):
 
         for name in names:
             self.profileCombo.addItem(
-                name,
+                self._profile_display_name(
+                    name
+                ),
                 name,
             )
 
@@ -738,6 +764,21 @@ class MainWindow(QMainWindow):
         self.profileCombo.blockSignals(
             False
         )
+
+    def _profile_display_name(
+        self,
+        name: str,
+    ) -> str:
+        key = _PROFILE_NAME_KEYS.get(
+            name
+        )
+
+        if key is not None:
+            return self.i18n.tr(
+                key
+            )
+
+        return name
 
     def _add_profile(
         self,
@@ -857,8 +898,12 @@ class MainWindow(QMainWindow):
 
     def _profile_changed(
         self,
-        name: str,
+        index: int,
     ) -> None:
+        name = self.profileCombo.itemData(
+            index
+        )
+
         if not name:
             return
 
@@ -1009,6 +1054,7 @@ class MainWindow(QMainWindow):
         else:
             self._current_binding_index = None
             self._clear_editor()
+            self._show_editor_hint()
 
     def _set_binding_row(
         self,
@@ -1113,6 +1159,13 @@ class MainWindow(QMainWindow):
             container,
         )
 
+        # setItemWidget 之后再算一次尺寸，避免 item 高度不足把
+        # 卡片第二行（手势摘要）裁掉，只剩顶部勾选框。
+        container.adjustSize()
+        item.setSizeHint(
+            container.sizeHint()
+        )
+
     def _binding_enabled_toggled(
         self,
         binding: dict,
@@ -1195,6 +1248,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         if row < 0:
             self._clear_editor()
+            self._show_editor_hint()
             return
 
         self._sync_current_binding()
@@ -1251,6 +1305,25 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Binding editor
     # ------------------------------------------------------------------
+
+    def _show_editor_hint(
+        self,
+    ) -> None:
+        hint = QLabel(
+            self.i18n.tr(
+                "editor.empty"
+            )
+        )
+        hint.setObjectName(
+            "gestureParam"
+        )
+        hint.setWordWrap(
+            True
+        )
+        self.editor_layout.addWidget(
+            hint
+        )
+        self.editor_layout.addStretch()
 
     def _clear_editor(
         self,
@@ -2492,6 +2565,8 @@ class MainWindow(QMainWindow):
                 "left.title"
             )
         )
+
+        self._rebuild_profile_combo()
 
         self.refresh_status()
 
