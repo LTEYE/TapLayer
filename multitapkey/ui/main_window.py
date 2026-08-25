@@ -352,11 +352,7 @@ class MainWindow(QMainWindow):
             self._settings_changed
         )
 
-        self.startupCheck = QCheckBox(
-            self.i18n.tr(
-                "startup.checkbox"
-            )
-        )
+        self.startupCheck = QCheckBox()
 
         self.startupCheck.stateChanged.connect(
             self._startup_changed
@@ -366,11 +362,7 @@ class MainWindow(QMainWindow):
             self._settings_changed
         )
 
-        self.overlayCheck = QCheckBox(
-            self.i18n.tr(
-                "settings.overlay"
-            )
-        )
+        self.overlayCheck = QCheckBox()
 
         self.overlayCheck.stateChanged.connect(
             self._settings_changed
@@ -751,11 +743,10 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _template_binding_dict() -> dict:
-        def chord_action(key: str) -> dict:
-            return {
-                "type": "chord",
-                "keys": [key],
-            }
+        unset = {
+            "type": "chord",
+            "keys": [],
+        }
 
         return {
             "trigger": {
@@ -765,12 +756,9 @@ class MainWindow(QMainWindow):
             "enabled": True,
             "gestures": {
                 "taps": {
-                    "1": chord_action("F23"),
-                    "2": chord_action("F24"),
-                    "3": chord_action("F22"),
-                    "4": chord_action("F21"),
+                    "1": copy.deepcopy(unset),
                 },
-                "hold": chord_action("F21"),
+                "hold": copy.deepcopy(unset),
             },
         }
 
@@ -1326,8 +1314,6 @@ class MainWindow(QMainWindow):
             self._add_tap_button
         )
 
-        self._mark_editor_changed()
-
     def _build_gesture_group(
         self,
         key: str,
@@ -1505,16 +1491,21 @@ class MainWindow(QMainWindow):
         self,
         taps: dict,
     ) -> None:
-        count = max(
-            (
-                int(raw)
-                for raw in taps
-            ),
-            default=0,
+        existing = {
+            int(raw)
+            for raw in taps
+        }
+
+        has_gap = any(
+            candidate not in existing
+            for candidate in range(
+                1,
+                MAX_TAP_COUNT + 1,
+            )
         )
 
         self._add_tap_button.setEnabled(
-            count < MAX_TAP_COUNT
+            has_gap
         )
 
     def _add_tap_level(
@@ -1538,15 +1529,25 @@ class MainWindow(QMainWindow):
             "gestures"
         ]["taps"]
 
-        count = max(
-            (
-                int(raw)
-                for raw in taps
-            ),
-            default=0,
-        )
+        existing = {
+            int(raw)
+            for raw in taps
+        }
 
-        if count >= MAX_TAP_COUNT:
+        for candidate in range(
+            1,
+            MAX_TAP_COUNT + 1,
+        ):
+            if candidate in existing:
+                continue
+
+            # 新连击级别 = 未设置状态（"选择热键"），不预绑任何热键
+            taps[str(candidate)] = {
+                "type": "chord",
+                "keys": [],
+            }
+            break
+        else:
             QMessageBox.information(
                 self,
                 self.i18n.tr(
@@ -1557,11 +1558,6 @@ class MainWindow(QMainWindow):
                 ),
             )
             return
-
-        taps[str(count + 1)] = {
-            "type": "disabled",
-            "keys": [],
-        }
 
         self._load_binding_editor(
             binding
@@ -2315,6 +2311,12 @@ class MainWindow(QMainWindow):
                 label.setText(
                     self.i18n.tr(key)
                 )
+
+        self._add_profile_button.setText(
+            self.i18n.tr(
+                "profile.add"
+            )
+        )
 
         if self._settings_group is not None:
             self._settings_group.setTitle(

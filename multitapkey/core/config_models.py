@@ -247,9 +247,11 @@ def _validate_action(
             )
 
     if not raw_keys:
-        raise ConfigError(
-            "invalid_key",
-            key="<empty chord>",
+        # 空 chord = 未设置（"选择热键"状态），合法占位；
+        # 与 type="disabled"（用户明确禁用）语义不同。
+        return ActionSpec(
+            type="chord",
+            keys=(),
         )
 
     if len(raw_keys) > MAX_CHORD_KEYS:

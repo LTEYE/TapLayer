@@ -187,33 +187,40 @@ def test_invalid_trigger_key():
         )
 
 
-def test_empty_action_chord_rejected():
-    with pytest.raises(ConfigError):
-        validate_and_build(
-            make_dict(
-                profiles={
-                    "default": {
-                        "bindings": [
-                            {
-                                "trigger": chord("F24"),
-                                "enabled": True,
-                                "gestures": {
-                                    "taps": {
-                                        "1": {
-                                            "type": "chord",
-                                            "keys": [],
-                                        },
+def test_empty_action_chord_allowed_as_unset():
+    # 空 chord 动作 = "选择热键"未设置状态，合法放行（trigger 已配置时亦然）
+    config = validate_and_build(
+        make_dict(
+            profiles={
+                "default": {
+                    "bindings": [
+                        {
+                            "trigger": chord("F24"),
+                            "enabled": True,
+                            "gestures": {
+                                "taps": {
+                                    "1": {
+                                        "type": "chord",
+                                        "keys": [],
                                     },
-                                    "hold": disabled(),
                                 },
+                                "hold": disabled(),
                             },
-                        ],
-                    },
-                    "Gaming": {"bindings": []},
-                    "Work": {"bindings": []},
-                }
-            )
+                        },
+                    ],
+                },
+                "Gaming": {"bindings": []},
+                "Work": {"bindings": []},
+            }
         )
+    )
+
+    tap_action = config.profiles[0].bindings[0].gestures.taps[0][1]
+
+    assert tap_action == ActionSpec(
+        type="chord",
+        keys=(),
+    )
 
 
 def test_duplicate_trigger_rejected():
@@ -504,4 +511,43 @@ def test_empty_trigger_allowed_as_unset():
     assert (
         config.profiles[0].bindings[0].trigger
         == ()
+    )
+
+
+def test_empty_chord_action_allowed_as_unset():
+    """空 chord 动作（\"选择热键\"未设置状态）必须放行，与 disabled 区分。"""
+    data = make_dict(
+        profiles={
+            "default": {
+                "bindings": [
+                    {
+                        "trigger": chord(),
+                        "enabled": True,
+                        "gestures": {
+                            "taps": {
+                                "1": chord(),
+                            },
+                            "hold": chord(),
+                        },
+                    },
+                ],
+            },
+            "Gaming": {"bindings": []},
+            "Work": {"bindings": []},
+        }
+    )
+
+    config = validate_and_build(data)
+
+    binding = config.profiles[0].bindings[0]
+
+    assert binding.trigger == ()
+
+    assert binding.gestures.taps == (
+        (1, ActionSpec(type="chord", keys=())),
+    )
+
+    assert binding.gestures.hold == ActionSpec(
+        type="chord",
+        keys=(),
     )
