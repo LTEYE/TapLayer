@@ -91,9 +91,12 @@ _THEME_QSS = {
         " color: #2C2C2A; border: 0.5px solid #D3D1C7;"
         " border-radius: 4px; }"
         "QPushButton { background: #FFFFFF; color: #2C2C2A;"
-        " border: 0.5px solid #D3D1C7; border-radius: 4px;"
-        " padding: 3px 10px; }"
+        " border: 0.5px solid #D3D1C7; border-radius: 6px;"
+        " padding: 6px 14px; font-size: 13px;"
+        " min-height: 26px; }"
         "QPushButton:hover { background: #F1EFE8; }"
+        "#applyButton { font-size: 15px; min-height: 44px;"
+        " border-radius: 8px; }"
     ),
     "dark": (
         "#statusLabel, #dirtyLabel { font-weight: 500; }"
@@ -126,9 +129,12 @@ _THEME_QSS = {
         "QComboBox QAbstractItemView { background: #2B2B2B;"
         " color: #E0E0E0; selection-background-color: #1F3B57; }"
         "QPushButton { background: #2B2B2B; color: #E0E0E0;"
-        " border: 0.5px solid #3C3C3C; border-radius: 4px;"
-        " padding: 3px 10px; }"
+        " border: 0.5px solid #3C3C3C; border-radius: 6px;"
+        " padding: 6px 14px; font-size: 13px;"
+        " min-height: 26px; }"
         "QPushButton:hover { background: #3C3C3C; }"
+        "#applyButton { font-size: 15px; min-height: 44px;"
+        " border-radius: 8px; }"
         "QMenu { background: #2B2B2B; color: #E0E0E0;"
         " border: 0.5px solid #3C3C3C; }"
         "QMenu::item:selected { background: #1F3B57; }"
@@ -454,8 +460,98 @@ class MainWindow(QMainWindow):
 
         self._settings_group = settings
 
-        self.settings_layout = QFormLayout(
+        # 设置面板 = 左（设置项表单） + 右（保存配置大按钮区）
+        self.settings_layout = QHBoxLayout(
             settings
+        )
+        self.settings_layout.setContentsMargins(
+            12,
+            12,
+            12,
+            12,
+        )
+        self.settings_layout.setSpacing(
+            16
+        )
+
+        self._settings_form = QFormLayout()
+        self._settings_form.setVerticalSpacing(
+            8
+        )
+        self.settings_layout.addLayout(
+            self._settings_form,
+            1,
+        )
+
+        right_panel = QVBoxLayout()
+        right_panel.setSpacing(
+            8
+        )
+        right_panel.addStretch()
+
+        self._apply_button = QPushButton(
+            self.i18n.tr(
+                "button.apply"
+            )
+        )
+        self._apply_button.setObjectName(
+            "applyButton"
+        )
+        self._apply_button.setMinimumWidth(
+            220
+        )
+        self._apply_button.clicked.connect(
+            self._apply
+        )
+        self._tr_buttons[
+            "button.apply"
+        ] = self._apply_button
+        right_panel.addWidget(
+            self._apply_button
+        )
+
+        op_row = QHBoxLayout()
+        op_row.setSpacing(
+            8
+        )
+
+        for key, handler in (
+            (
+                "button.import",
+                self.import_config,
+            ),
+            (
+                "button.export",
+                self.export_config,
+            ),
+            (
+                "button.restore_default",
+                self._restore_default,
+            ),
+            (
+                "button.help",
+                self._show_help,
+            ),
+        ):
+            button = QPushButton(
+                self.i18n.tr(key)
+            )
+            button.clicked.connect(
+                handler
+            )
+            self._tr_buttons[key] = button
+            op_row.addWidget(
+                button
+            )
+
+        right_panel.addLayout(
+            op_row
+        )
+        right_panel.addStretch()
+
+        self.settings_layout.addLayout(
+            right_panel,
+            0,
         )
 
         self.spinDoubleTap = QSpinBox()
@@ -550,42 +646,42 @@ class MainWindow(QMainWindow):
             self._settings_changed
         )
 
-        self.settings_layout.addRow(
+        self._settings_form.addRow(
             self.i18n.tr(
                 "settings.double_tap"
             ),
             self.spinDoubleTap,
         )
 
-        self.settings_layout.addRow(
+        self._settings_form.addRow(
             self.i18n.tr(
                 "settings.hold"
             ),
             self.spinHold,
         )
 
-        self.settings_layout.addRow(
+        self._settings_form.addRow(
             self.i18n.tr(
                 "settings.language"
             ),
             self.languageCombo,
         )
 
-        self.settings_layout.addRow(
+        self._settings_form.addRow(
             self.i18n.tr(
                 "settings.theme"
             ),
             self.themeCombo,
         )
 
-        self.settings_layout.addRow(
+        self._settings_form.addRow(
             self.i18n.tr(
                 "settings.startup"
             ),
             self.startupCheck,
         )
 
-        self.settings_layout.addRow(
+        self._settings_form.addRow(
             self.i18n.tr(
                 "settings.overlay"
             ),
@@ -594,62 +690,6 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(
             settings
-        )
-
-        action_row = QHBoxLayout()
-
-        self._apply_button = QPushButton(
-            self.i18n.tr(
-                "button.apply"
-            )
-        )
-        self._apply_button.clicked.connect(
-            self._apply
-        )
-        self._tr_buttons[
-            "button.apply"
-        ] = self._apply_button
-        action_row.addWidget(
-            self._apply_button
-        )
-
-        main_layout.addLayout(
-            action_row
-        )
-
-        io_row = QHBoxLayout()
-
-        for key, handler in (
-            (
-                "button.import",
-                self.import_config,
-            ),
-            (
-                "button.export",
-                self.export_config,
-            ),
-            (
-                "button.restore_default",
-                self._restore_default,
-            ),
-            (
-                "button.help",
-                self._show_help,
-            ),
-        ):
-            button = QPushButton(
-                self.i18n.tr(key)
-            )
-            button.clicked.connect(
-                handler
-            )
-            self._tr_buttons[key] = button
-            io_row.addWidget(
-                button
-            )
-
-        main_layout.addLayout(
-            io_row
         )
 
     # ------------------------------------------------------------------
@@ -707,6 +747,20 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(
             _THEME_QSS[resolved]
         )
+
+        # 强制刷新全部子控件，避免样式表切换后一半控件
+        # 停留在旧主题（黑底白字/白底浅字混排）
+        style = self.style()
+
+        for widget in self.findChildren(
+            QWidget
+        ):
+            style.unpolish(
+                widget
+            )
+            style.polish(
+                widget
+            )
 
         # 控件未建完时（_build_ui 早期调用）跳过状态刷新
         if (
@@ -1765,7 +1819,7 @@ class MainWindow(QMainWindow):
             )
         )
         test_button.setFixedWidth(
-            56
+            68
         )
         test_button.clicked.connect(
             lambda _checked=False,
@@ -1784,7 +1838,7 @@ class MainWindow(QMainWindow):
                 "gestureMenuBtn"
             )
             menu_button.setFixedWidth(
-                32
+                38
             )
 
             menu = QMenu(
@@ -2860,17 +2914,17 @@ class MainWindow(QMainWindow):
         }
 
         for i in range(
-            self.settings_layout.rowCount()
+            self._settings_form.rowCount()
         ):
             field_item = (
-                self.settings_layout.itemAt(
+                self._settings_form.itemAt(
                     i,
                     QFormLayout.FieldRole,
                 )
             )
 
             label_item = (
-                self.settings_layout.itemAt(
+                self._settings_form.itemAt(
                     i,
                     QFormLayout.LabelRole,
                 )
