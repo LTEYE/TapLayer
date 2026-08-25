@@ -187,16 +187,26 @@ def test_invalid_trigger_key():
         )
 
 
-def test_empty_chord_rejected():
+def test_empty_action_chord_rejected():
     with pytest.raises(ConfigError):
         validate_and_build(
             make_dict(
                 profiles={
                     "default": {
                         "bindings": [
-                            binding_dict(
-                                trigger=()
-                            )
+                            {
+                                "trigger": chord("F24"),
+                                "enabled": True,
+                                "gestures": {
+                                    "taps": {
+                                        "1": {
+                                            "type": "chord",
+                                            "keys": [],
+                                        },
+                                    },
+                                    "hold": disabled(),
+                                },
+                            },
                         ],
                     },
                     "Gaming": {"bindings": []},
@@ -344,15 +354,42 @@ def test_tap_count_range():
         )
 
 
-def test_invalid_profile_set():
+def test_missing_default_profile_rejected():
     with pytest.raises(ConfigError):
         validate_and_build(
             make_dict(
                 profiles={
-                    "default": {"bindings": []},
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
                 }
             )
         )
+
+
+def test_empty_profile_set_rejected():
+    with pytest.raises(ConfigError):
+        validate_and_build(
+            make_dict(
+                profiles={}
+            )
+        )
+
+
+def test_arbitrary_profile_name_allowed():
+    data = make_dict()
+
+    data["profiles"]["MyProfile"] = {
+        "bindings": [binding_dict()],
+    }
+
+    config = validate_and_build(data)
+
+    names = {
+        profile.name
+        for profile in config.profiles
+    }
+
+    assert "MyProfile" in names
 
 
 def test_invalid_language():
@@ -438,11 +475,33 @@ def test_default_config_profiles_populated():
         assert len(profile.bindings) > 0
 
 
-def test_default_trigger_is_f24():
+def test_default_trigger_unset():
     config = default_config()
 
     binding = config.profiles[0].bindings[0]
 
-    assert binding.trigger == (
-        "F24",
+    # 默认模板触发键未设置（"选择热键"状态），由用户录制
+    assert binding.trigger == ()
+
+
+def test_empty_trigger_allowed_as_unset():
+    data = make_dict(
+        profiles={
+            "default": {
+                "bindings": [
+                    binding_dict(
+                        trigger=()
+                    ),
+                ],
+            },
+            "Gaming": {"bindings": []},
+            "Work": {"bindings": []},
+        }
+    )
+
+    config = validate_and_build(data)
+
+    assert (
+        config.profiles[0].bindings[0].trigger
+        == ()
     )

@@ -31,6 +31,7 @@ from multitapkey.core.chord import (
 )
 from multitapkey.core.config_models import (
     MAX_TAP_COUNT,
+    PROFILE_NAMES,
     Config,
     ConfigError,
     default_config,
@@ -95,6 +96,9 @@ class MainWindow(QMainWindow):
 
         # OSD 浮层（默认关闭）
         self._gesture_overlay = None
+
+        # 编辑器脏标记（区别于 working!=saved，控件变更立即置位）
+        self._editor_dirty = False
 
         self._build_ui()
 
@@ -168,6 +172,20 @@ class MainWindow(QMainWindow):
         profile_row.addWidget(
             self.profileCombo
         )
+
+        self._add_profile_button = QPushButton(
+            self.i18n.tr(
+                "profile.add"
+            )
+        )
+        self._add_profile_button.clicked.connect(
+            self._add_profile
+        )
+        profile_row.addWidget(
+            self._add_profile_button
+        )
+
+        profile_row.addStretch()
 
         main_layout.addLayout(
             profile_row
@@ -324,7 +342,7 @@ class MainWindow(QMainWindow):
         )
 
         self.overlayCheck.stateChanged.connect(
-            self._mark_editor_changed
+            self._overlay_toggled
         )
 
         self.settings_layout.addRow(
@@ -368,28 +386,23 @@ class MainWindow(QMainWindow):
 
         action_row = QHBoxLayout()
 
-        apply_button = QPushButton(
+        self._apply_button = QPushButton(
             self.i18n.tr(
                 "button.apply"
             )
         )
-        apply_button.clicked.connect(
+        self._apply_button.clicked.connect(
             self._apply
         )
         self._tr_buttons[
             "button.apply"
-        ] = apply_button
+        ] = self._apply_button
         action_row.addWidget(
-            apply_button
+            self._apply_button
         )
-
-        self._test_row = QHBoxLayout()
 
         main_layout.addLayout(
             action_row
-        )
-        main_layout.addLayout(
-            self._test_row
         )
 
         io_row = QHBoxLayout()
@@ -480,11 +493,13 @@ class MainWindow(QMainWindow):
     def refresh_all(
         self,
     ) -> None:
+        self._editor_dirty = False
         self._rebuild_profile_combo()
         self._reload_working_from_config(
             preserve_profile=True
         )
         self.refresh_status()
+        self._update_apply_highlight()
 
     def replace_config(
         self,
@@ -595,23 +610,33 @@ class MainWindow(QMainWindow):
 
         self.profileCombo.clear()
 
-        for name in (
-            "default",
-            "Gaming",
-            "Work",
-        ):
-            self.profileCombo.addItem(
-                name,
-                name,
-            )
+        names = list(
+            self._working.get(
+                "profiles",
+                {},
+            ).keys()
+        )
 
-        target = (
+        if not names:
+            names = list(PROFILE_NAMES)
+
+        active = (
             current_profile
             or self.engine.profile_name
         )
 
+        for name in names:
+            icon = self._profile_icon(
+                name == active
+            )
+            self.profileCombo.addItem(
+                icon,
+                name,
+                name,
+            )
+
         index = self.profileCombo.findData(
-            target
+            active
         )
 
         if index < 0:
@@ -624,6 +649,159 @@ class MainWindow(QMainWindow):
         self.profileCombo.blockSignals(
             False
         )
+
+    @staticmethod
+    def _profile_icon(
+        active: bool,
+    ):
+        from PySide6.QtCore import (
+            QPoint,
+            Qt,
+        )
+        from PySide6.QtGui import (
+            QColor,
+            QIcon,
+            QPainter,
+            QPixmap,
+            QPolygon,
+        )
+
+        pixmap = QPixmap(
+            14,
+            14,
+        )
+        pixmap.fill(
+            Qt.GlobalColor.transparent
+        )
+
+        painter = QPainter(
+            pixmap
+        )
+
+        if active:
+            painter.setBrush(
+                QColor("#1a6cff")
+            )
+            painter.setPen(
+                Qt.PenStyle.NoPen
+            )
+            painter.drawPolygon(
+                QPolygon(
+                    [
+                        QPoint(2, 1),
+                        QPoint(13, 7),
+                        QPoint(2, 13),
+                    ]
+                )
+            )
+        else:
+            painter.setBrush(
+                QColor("#9aa0a6")
+            )
+            painter.setPen(
+                Qt.PenStyle.NoPen
+            )
+            painter.drawRect(
+                2,
+                2,
+                10,
+                10,
+            )
+
+        painter.end()
+
+        return QIcon(pixmap)
+
+    def _add_profile(
+        self,
+    ) -> None:
+        from PySide6.QtWidgets import (
+            QInputDialog,
+        )
+
+        name, ok = QInputDialog.getText(
+            self,
+            self.i18n.tr(
+                "profile.add.title"
+            ),
+            self.i18n.tr(
+                "profile.add.prompt"
+            ),
+        )
+
+        if not ok:
+            return
+
+        name = name.strip()
+
+        if not name:
+            QMessageBox.information(
+                self,
+                self.i18n.tr(
+                    "profile.add.title"
+                ),
+                self.i18n.tr(
+                    "profile.add.invalid"
+                ),
+            )
+            return
+
+        profiles = self._working.get(
+            "profiles",
+            {},
+        )
+
+        if name in profiles:
+            QMessageBox.information(
+                self,
+                self.i18n.tr(
+                    "profile.add.title"
+                ),
+                self.i18n.tr(
+                    "profile.add.exists"
+                ),
+            )
+            return
+
+        # 新配置档 = 一套独立模板（默认绑定，触发键未设置）
+        profiles[name] = {
+            "bindings": [
+                copy.deepcopy(
+                    self._template_binding_dict()
+                )
+            ],
+        }
+
+        self._rebuild_profile_combo(
+            current_profile=name
+        )
+
+        self._mark_editor_changed()
+
+    @staticmethod
+    def _template_binding_dict() -> dict:
+        def chord_action(key: str) -> dict:
+            return {
+                "type": "chord",
+                "keys": [key],
+            }
+
+        return {
+            "trigger": {
+                "type": "chord",
+                "keys": [],
+            },
+            "enabled": True,
+            "gestures": {
+                "taps": {
+                    "1": chord_action("F23"),
+                    "2": chord_action("F24"),
+                    "3": chord_action("F22"),
+                    "4": chord_action("F21"),
+                },
+                "hold": chord_action("F21"),
+            },
+        }
 
     def _profile_changed(
         self,
@@ -676,6 +854,7 @@ class MainWindow(QMainWindow):
             self._working = copy.deepcopy(
                 self._saved
             )
+            self._editor_dirty = False
 
         try:
             self.engine.set_profile(
@@ -760,10 +939,20 @@ class MainWindow(QMainWindow):
             "trigger"
         ]
 
-        trigger = chord_display(
+        trigger_keys = (
             trigger_action.get(
                 "keys",
                 [],
+            )
+        )
+
+        trigger = (
+            chord_display(
+                trigger_keys
+            )
+            if trigger_keys
+            else self.i18n.tr(
+                "binding.no_trigger"
             )
         )
 
@@ -998,8 +1187,6 @@ class MainWindow(QMainWindow):
             self._add_tap_button
         )
 
-        self._rebuild_test_buttons()
-
         self._mark_editor_changed()
 
     def _build_gesture_group(
@@ -1093,11 +1280,42 @@ class MainWindow(QMainWindow):
             self._mark_editor_changed
         )
 
-        layout.addWidget(
+        row = QHBoxLayout()
+
+        left = QVBoxLayout()
+
+        left.addWidget(
             disabled
         )
-        layout.addWidget(
+        left.addWidget(
             button
+        )
+
+        row.addLayout(
+            left,
+            1,
+        )
+
+        test_button = QPushButton(
+            self.i18n.tr(
+                "button.test"
+            )
+        )
+        test_button.setFixedWidth(
+            56
+        )
+        test_button.clicked.connect(
+            lambda _checked=False,
+            k=key:
+            self._test_gesture(k)
+        )
+
+        row.addWidget(
+            test_button
+        )
+
+        layout.addLayout(
+            row
         )
 
         self._update_gesture_widget_state(
@@ -1254,80 +1472,6 @@ class MainWindow(QMainWindow):
 
         self._mark_editor_changed()
 
-    def _rebuild_test_buttons(
-        self,
-    ) -> None:
-        while self._test_row.count():
-            item = self._test_row.takeAt(0)
-            widget = item.widget()
-
-            if widget is not None:
-                widget.deleteLater()
-
-        if (
-            self._current_binding_index
-            is None
-        ):
-            self._test_row.addStretch()
-            return
-
-        bindings = self._working_profile()[
-            "bindings"
-        ]
-
-        if not (
-            0
-            <= self._current_binding_index
-            < len(bindings)
-        ):
-            self._test_row.addStretch()
-            return
-
-        binding = bindings[
-            self._current_binding_index
-        ]
-
-        taps = binding[
-            "gestures"
-        ].get(
-            "taps",
-            {},
-        )
-
-        for raw_count in sorted(
-            taps,
-            key=int,
-        ):
-            button = QPushButton(
-                self.i18n.tr(
-                    "gesture.tap",
-                    count=raw_count,
-                )
-            )
-            button.clicked.connect(
-                lambda _checked=False,
-                c=raw_count:
-                self._test_gesture(c)
-            )
-            self._test_row.addWidget(
-                button
-            )
-
-        hold_button = QPushButton(
-            self.i18n.tr(
-                "gesture.hold"
-            )
-        )
-        hold_button.clicked.connect(
-            lambda _checked=False:
-            self._test_gesture("hold")
-        )
-        self._test_row.addWidget(
-            hold_button
-        )
-
-        self._test_row.addStretch()
-
     def _record_chord(
         self,
     ):
@@ -1401,7 +1545,43 @@ class MainWindow(QMainWindow):
         self,
         *_args,
     ) -> None:
-        return
+        self._editor_dirty = True
+        self._update_apply_highlight()
+
+    def _update_apply_highlight(
+        self,
+    ) -> None:
+        if (
+            not hasattr(
+                self,
+                "_apply_button",
+            )
+            or self._apply_button is None
+        ):
+            return
+
+        if (
+            self._editor_dirty
+            or self._is_dirty()
+        ):
+            self._apply_button.setStyleSheet(
+                "background-color: #1a6cff;"
+                "color: #ffffff;"
+                "font-weight: bold;"
+            )
+        else:
+            self._apply_button.setStyleSheet(
+                ""
+            )
+
+    def _overlay_toggled(
+        self,
+        *_args,
+    ) -> None:
+        self._mark_editor_changed()
+
+        # 开关型设置：即时生效，无需再点"应用"
+        self._apply()
 
     def _sync_current_binding(
         self,
@@ -1505,73 +1685,14 @@ class MainWindow(QMainWindow):
 
         profile = self._working_profile()
 
-        used = {
-            tuple(
-                binding[
-                    "trigger"
-                ].get(
-                    "keys",
-                    [],
-                )
-            )
-            for binding in profile[
-                "bindings"
-            ]
-        }
-
-        default_trigger = next(
-            (
-                key
-                for key in (
-                    "F24",
-                    "F23",
-                    "F22",
-                    "F21",
-                )
-                if (key,) not in used
-            ),
-            None,
-        )
-
-        if default_trigger is None:
-            QMessageBox.information(
-                self,
-                self.i18n.tr(
-                    "binding.add.title"
-                ),
-                self.i18n.tr(
-                    "binding.add.no_key"
-                ),
-            )
-            return
-
-        disabled = {
-            "type": "disabled",
-            "keys": [],
-        }
-
+        # 新绑定 = 模板：手势默认启用（禁用改由用户手动勾选），
+        # 触发键未设置（"选择热键"），由用户录制。
         profile[
             "bindings"
         ].append(
-            {
-                "trigger": {
-                    "type": "chord",
-                    "keys": [
-                        default_trigger
-                    ],
-                },
-                "enabled": True,
-                "gestures": {
-                    "taps": {
-                        "1": copy.deepcopy(
-                            disabled
-                        ),
-                    },
-                    "hold": copy.deepcopy(
-                        disabled
-                    ),
-                },
-            }
+            copy.deepcopy(
+                self._template_binding_dict()
+            )
         )
 
         self._current_binding_index = (
@@ -1798,6 +1919,9 @@ class MainWindow(QMainWindow):
                 "status.saved"
             )
         )
+
+        self._editor_dirty = False
+        self._update_apply_highlight()
 
     # ------------------------------------------------------------------
     # Gesture overlay (OSD)

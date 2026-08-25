@@ -268,6 +268,67 @@ def _validate_action(
     )
 
 
+def _validate_trigger(
+    data: Any,
+) -> tuple[str, ...]:
+    """Trigger may be an unset chord (empty keys) — shown as 'Select Hotkey'.
+
+    A non-empty trigger is canonicalized. Empty means 'not configured yet',
+    and the engine skips such bindings until a trigger is recorded.
+    """
+    obj = _require_dict(
+        data,
+        "binding.trigger",
+    )
+
+    _require_exact_keys(
+        obj,
+        ACTION_FIELDS,
+    )
+
+    if obj.get("type") != "chord":
+        raise ConfigError(
+            "invalid_type",
+            field="binding.trigger",
+            expected="chord",
+        )
+
+    raw_keys = obj.get(
+        "keys",
+        [],
+    )
+
+    if not isinstance(
+        raw_keys,
+        list,
+    ):
+        raise ConfigError(
+            "invalid_type",
+            field="binding.trigger.keys",
+            expected="array",
+        )
+
+    for key in raw_keys:
+        if not is_valid_key_name(key):
+            raise ConfigError(
+                "invalid_key",
+                key=key,
+            )
+
+    if len(raw_keys) > MAX_CHORD_KEYS:
+        raise ConfigError(
+            "invalid_key",
+            key="<chord too large>",
+        )
+
+    if not raw_keys:
+        return ()
+
+    return canonicalize_keys(
+        raw_keys
+    )
+
+
 def _validate_gestures(
     data: Any,
 ) -> GestureSpec:
@@ -360,16 +421,9 @@ def _validate_binding(
         BINDING_FIELDS,
     )
 
-    trigger_action = _validate_action(
+    trigger = _validate_trigger(
         obj.get("trigger")
     )
-
-    if trigger_action.type != "chord":
-        raise ConfigError(
-            "invalid_type",
-            field="binding.trigger",
-            expected="chord",
-        )
 
     enabled = obj.get("enabled")
 
@@ -385,7 +439,7 @@ def _validate_binding(
     )
 
     return Binding(
-        trigger=trigger_action.keys,
+        trigger=trigger,
         enabled=enabled,
         gestures=gestures,
     )
@@ -395,7 +449,10 @@ def _validate_profile(
     name: str,
     data: Any,
 ) -> Profile:
-    if name not in PROFILE_NAMES:
+    if (
+        not isinstance(name, str)
+        or not name.strip()
+    ):
         raise ConfigError(
             "invalid_profile",
             profile=name,
@@ -428,6 +485,7 @@ def _validate_profile(
 
         if (
             binding.trigger
+            and binding.trigger
             in seen_triggers
         ):
             raise ConfigError(
@@ -552,12 +610,16 @@ def validate_and_build(
         "profiles",
     )
 
-    if set(profiles_obj) != set(
-        PROFILE_NAMES
-    ):
+    if not profiles_obj:
         raise ConfigError(
             "invalid_profile",
-            profile="profile set",
+            profile="empty profile set",
+        )
+
+    if "default" not in profiles_obj:
+        raise ConfigError(
+            "invalid_profile",
+            profile="missing default",
         )
 
     profiles = tuple(
@@ -565,7 +627,7 @@ def validate_and_build(
             name,
             profiles_obj[name],
         )
-        for name in PROFILE_NAMES
+        for name in profiles_obj
     )
 
     return Config(
@@ -598,9 +660,7 @@ def _disabled_action() -> ActionSpec:
 
 def _default_binding() -> Binding:
     return Binding(
-        trigger=canonicalize_keys(
-            ("F24",)
-        ),
+        trigger=(),
         enabled=True,
         gestures=GestureSpec(
             taps=(

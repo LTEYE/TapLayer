@@ -184,6 +184,16 @@ class KeyChordRecorder(QDialog):
         self._backend.cancel_capture()
         super().reject()
 
+    def focusOutEvent(self, event):
+        # 用户已离开该窗口：不再死等绑定，取消录制并恢复正常输入
+        if self.isVisible():
+            self._timer.stop()
+            self._backend.cancel_capture()
+            self.reject()
+            return
+
+        super().focusOutEvent(event)
+
     def closeEvent(self, event):
         self._timer.stop()
         self._backend.cancel_capture()

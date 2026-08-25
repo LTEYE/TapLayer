@@ -243,6 +243,10 @@ class Engine:
             if not binding.enabled:
                 continue
 
+            if not binding.trigger:
+                # 触发键未设置（"选择热键"状态）：跳过
+                continue
+
             display = (
                 binding.trigger_display
             )
