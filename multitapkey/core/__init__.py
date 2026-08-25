@@ -1,0 +1,1 @@
+"""Platform-independent MultiTapKey core."""
