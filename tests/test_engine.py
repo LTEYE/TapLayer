@@ -335,18 +335,37 @@ def test_gesture_observer_notified():
     observed = []
 
     engine.set_gesture_observer(
-        lambda trigger, desc: observed.append(
-            (trigger, desc)
-        )
+        observed.append
     )
 
     feed(keyboard, "F24", True, 0.0)
     feed(keyboard, "F24", False, 0.05)
     engine.pump()
 
-    assert observed == [
-        ("F24", "F24 × 1")
-    ]
+    # 观察者收到的是"将要执行的输出动作"
+    assert observed == ["F23"]
+
+
+def test_gesture_observer_not_called_for_disabled():
+    engine, keyboard, _ = make_engine(
+        make_config(
+            taps={
+                1: disabled_action(),
+            }
+        )
+    )
+
+    observed = []
+
+    engine.set_gesture_observer(
+        observed.append
+    )
+
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
+    engine.pump()
+
+    assert observed == []
 
 
 def test_gesture_observer_not_called_when_unset():

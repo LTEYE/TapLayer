@@ -72,6 +72,7 @@ class KeyChordRecorder(QDialog):
             i18n.tr("recorder.ok")
         )
         self._ok.setEnabled(False)
+        self._ok.setDefault(True)
         self._ok.clicked.connect(
             self._finish
         )
@@ -85,10 +86,10 @@ class KeyChordRecorder(QDialog):
 
         button_row.addStretch()
         button_row.addWidget(
-            self._ok
+            self._cancel
         )
         button_row.addWidget(
-            self._cancel
+            self._ok
         )
 
         layout.addLayout(

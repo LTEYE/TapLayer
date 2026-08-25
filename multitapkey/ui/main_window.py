@@ -650,23 +650,52 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         from PySide6.QtWidgets import (
+            QDialogButtonBox,
             QInputDialog,
         )
 
-        name, ok = QInputDialog.getText(
-            self,
+        dialog = QInputDialog(
+            self
+        )
+        dialog.setWindowTitle(
             self.i18n.tr(
                 "profile.add.title"
-            ),
+            )
+        )
+        dialog.setLabelText(
             self.i18n.tr(
                 "profile.add.prompt"
-            ),
+            )
         )
+        dialog.setTextValue("")
 
-        if not ok:
+        ok_button = dialog.button(
+            QDialogButtonBox.StandardButton.Ok
+        )
+        if ok_button is not None:
+            ok_button.setText(
+                self.i18n.tr(
+                    "recorder.ok"
+                )
+            )
+
+        cancel_button = dialog.button(
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        if cancel_button is not None:
+            cancel_button.setText(
+                self.i18n.tr(
+                    "recorder.cancel"
+                )
+            )
+
+        if (
+            dialog.exec()
+            != QDialog.DialogCode.Accepted
+        ):
             return
 
-        name = name.strip()
+        name = dialog.textValue().strip()
 
         if not name:
             QMessageBox.information(
@@ -747,19 +776,46 @@ class MainWindow(QMainWindow):
         self._sync_controls_to_working()
 
         if self._is_dirty():
-            result = QMessageBox.question(
-                self,
+            box = QMessageBox(
+                self
+            )
+            box.setWindowTitle(
                 self.i18n.tr(
                     "profile.discard.title"
-                ),
+                )
+            )
+            box.setText(
                 self.i18n.tr(
                     "profile.discard.message"
-                ),
+                )
+            )
+            box.setIcon(
+                QMessageBox.Icon.Question
             )
 
-            if result != (
-                QMessageBox.StandardButton.Yes
+            switch_button = box.addButton(
+                self.i18n.tr(
+                    "profile.discard.switch"
+                ),
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            cancel_button = box.addButton(
+                self.i18n.tr(
+                    "profile.discard.cancel"
+                ),
+                QMessageBox.ButtonRole.RejectRole,
+            )
+            box.setDefaultButton(
+                cancel_button
+            )
+
+            box.exec()
+
+            if (
+                box.clickedButton()
+                != switch_button
             ):
+                # 取消切换：回退组合框，仍留在当前配置档
                 self.profileCombo.blockSignals(
                     True
                 )

@@ -62,7 +62,6 @@ class GestureOverlay(QWidget):
 
     def show_gesture(
         self,
-        _trigger: str,
         description: str,
     ) -> None:
         self._label.setText(

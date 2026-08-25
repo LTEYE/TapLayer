@@ -402,12 +402,10 @@ class Engine:
         if binding is None:
             return
 
-        self._notify_observer(
-            trigger_display,
-            gesture,
-        )
-
         if gesture == Gesture.LONG:
+            self._notify_observer(
+                binding.gestures.hold
+            )
             self.execute_action_spec(
                 binding.gestures.hold
             )
@@ -426,6 +424,9 @@ class Engine:
         )
 
         if action_spec is not None:
+            self._notify_observer(
+                action_spec
+            )
             self.execute_action_spec(
                 action_spec
             )
@@ -445,29 +446,19 @@ class Engine:
 
     def _notify_observer(
         self,
-        trigger_display: str,
-        gesture: Gesture,
+        action_spec: ActionSpec,
     ) -> None:
         if self._gesture_observer is None:
             return
 
-        if gesture == Gesture.LONG:
-            description = (
-                f"{trigger_display} HOLD"
-            )
-        else:
-            count = _TAP_COUNT_FOR_GESTURE.get(
-                gesture,
-                1,
-            )
-            description = (
-                f"{trigger_display} × {count}"
-            )
+        if action_spec.type != "chord":
+            return
 
         try:
             self._gesture_observer(
-                trigger_display,
-                description,
+                chord_display(
+                    action_spec.keys
+                )
             )
         except Exception:
             log.exception(
