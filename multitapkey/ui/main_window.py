@@ -6,6 +6,7 @@ import copy
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -1860,6 +1861,53 @@ class MainWindow(QMainWindow):
             event.accept()
             return
 
+        box = QMessageBox(
+            self
+        )
+        box.setWindowTitle(
+            self.i18n.tr(
+                "close.title"
+            )
+        )
+        box.setText(
+            self.i18n.tr(
+                "close.message"
+            )
+        )
+        box.setIcon(
+            QMessageBox.Icon.Question
+        )
+
+        quit_button = box.addButton(
+            self.i18n.tr(
+                "close.quit"
+            ),
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        tray_button = box.addButton(
+            self.i18n.tr(
+                "close.to_tray"
+            ),
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(
+            tray_button
+        )
+
+        box.exec()
+
+        if (
+            box.clickedButton()
+            == quit_button
+        ):
+            # 彻底退出：进程必须真正结束，不留后台残留。
+            self.force_exit = True
+            self.hide()
+            QApplication.quit()
+            event.accept()
+            return
+
+        # 最小化到托盘：窗口隐藏，程序继续在后台运行。
         event.ignore()
         self.hide()
 

@@ -84,44 +84,27 @@ class HelpDialog(QDialog):
         )
 
         content_layout.addWidget(
+            body(
+                "help.bind.keynote"
+            )
+        )
+
+        content_layout.addWidget(
             heading(
-                "help.bind.how1_title"
+                "help.bind.how_title"
             )
         )
 
         for key in (
-            "help.bind.how1_step1",
-            "help.bind.how1_step2",
-            "help.bind.how1_step3",
-            "help.bind.how1_tip",
+            "help.bind.how1",
+            "help.bind.how2",
+            "help.bind.how3",
+            "help.bind.note",
+            "help.bind.alt",
         ):
             content_layout.addWidget(
                 body(key)
             )
-
-        content_layout.addWidget(
-            heading(
-                "help.bind.how2_title"
-            )
-        )
-
-        content_layout.addWidget(
-            body(
-                "help.bind.how2_text"
-            )
-        )
-
-        content_layout.addWidget(
-            body(
-                "help.bind.note"
-            )
-        )
-
-        content_layout.addWidget(
-            body(
-                "help.bind.limit"
-            )
-        )
 
         content_layout.addWidget(
             heading(
