@@ -73,7 +73,8 @@ _THEME_QSS = {
         "#bindingEditor, #settings_group, QGroupBox {"
         " background: #FFFFFF; color: #2C2C2A;"
         " border: 0.5px solid #D3D1C7;"
-        " border-radius: 8px; margin-top: 6px; }"
+        " border-radius: 8px; margin-top: 6px;"
+        " font-size: 14px; font-weight: 500; }"
         "#bindingCard { background: #FFFFFF;"
         " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
         "#bindingCard[selected=\"true\"] { background: #E6F1FB;"
@@ -90,15 +91,23 @@ _THEME_QSS = {
         " color: #2C2C2A; background: transparent; }"
         "#gestureParam { font-size: 11px; color: #888780;"
         " background: transparent; }"
-        "QComboBox, QSpinBox, QCheckBox { background: #FFFFFF;"
+        "QComboBox, QSpinBox { background: #FFFFFF;"
         " color: #2C2C2A; border: 0.5px solid #D3D1C7;"
         " border-radius: 4px; }"
+        "QComboBox QAbstractItemView { background: #FFFFFF;"
+        " color: #2C2C2A; selection-background-color: #E6F1FB; }"
+        "QCheckBox { color: #2C2C2A; background: transparent;"
+        " border: none; }"
+        "#leftTitle { font-size: 14px; font-weight: 500;"
+        " color: #2C2C2A; }"
+        "#editorTitle { font-size: 15px; font-weight: 500;"
+        " color: #2C2C2A; }"
         "QPushButton { background: #FFFFFF; color: #2C2C2A;"
         " border: 0.5px solid #D3D1C7; border-radius: 6px;"
         " padding: 6px 14px; font-size: 13px;"
         " min-height: 26px; }"
         "QPushButton:hover { background: #F1EFE8; }"
-        "#applyButton { font-size: 15px; min-height: 44px;"
+        "#applyButton { font-size: 16px; min-height: 48px;"
         " border-radius: 8px; }"
     ),
     "dark": (
@@ -112,7 +121,8 @@ _THEME_QSS = {
         "#bindingEditor, #settings_group, QGroupBox {"
         " background: #1E1E1E; color: #E0E0E0;"
         " border: 0.5px solid #3C3C3C;"
-        " border-radius: 8px; margin-top: 6px; }"
+        " border-radius: 8px; margin-top: 6px;"
+        " font-size: 14px; font-weight: 500; }"
         "#bindingCard { background: #2B2B2B;"
         " border: 0.5px solid #3C3C3C; border-radius: 8px; }"
         "#bindingCard[selected=\"true\"] { background: #1F3B57;"
@@ -129,17 +139,23 @@ _THEME_QSS = {
         " color: #E0E0E0; background: transparent; }"
         "#gestureParam { font-size: 11px; color: #888780;"
         " background: transparent; }"
-        "QComboBox, QSpinBox, QCheckBox { background: #2B2B2B;"
+        "QComboBox, QSpinBox { background: #2B2B2B;"
         " color: #E0E0E0; border: 0.5px solid #3C3C3C;"
         " border-radius: 4px; }"
         "QComboBox QAbstractItemView { background: #2B2B2B;"
         " color: #E0E0E0; selection-background-color: #1F3B57; }"
+        "QCheckBox { color: #E0E0E0; background: transparent;"
+        " border: none; }"
+        "#leftTitle { font-size: 14px; font-weight: 500;"
+        " color: #E0E0E0; }"
+        "#editorTitle { font-size: 15px; font-weight: 500;"
+        " color: #E0E0E0; }"
         "QPushButton { background: #2B2B2B; color: #E0E0E0;"
         " border: 0.5px solid #3C3C3C; border-radius: 6px;"
         " padding: 6px 14px; font-size: 13px;"
         " min-height: 26px; }"
         "QPushButton:hover { background: #3C3C3C; }"
-        "#applyButton { font-size: 15px; min-height: 44px;"
+        "#applyButton { font-size: 16px; min-height: 48px;"
         " border-radius: 8px; }"
         "QMenu { background: #2B2B2B; color: #E0E0E0;"
         " border: 0.5px solid #3C3C3C; }"
@@ -377,6 +393,9 @@ class MainWindow(QMainWindow):
                 "left.title"
             )
         )
+        self._left_title.setObjectName(
+            "leftTitle"
+        )
         left.addWidget(
             self._left_title
         )
@@ -445,8 +464,30 @@ class MainWindow(QMainWindow):
             self.bindingEditor
         )
 
-        content.addWidget(
+        right_column = QVBoxLayout()
+        right_column.setSpacing(
+            4
+        )
+
+        self._editor_title = QLabel(
+            self.i18n.tr(
+                "binding.editor"
+            )
+        )
+        self._editor_title.setObjectName(
+            "editorTitle"
+        )
+        right_column.addWidget(
+            self._editor_title
+        )
+
+        right_column.addWidget(
             self.editor_scroll,
+            1,
+        )
+
+        content.addLayout(
+            right_column,
             2,
         )
 
@@ -482,7 +523,10 @@ class MainWindow(QMainWindow):
 
         self._settings_form = QFormLayout()
         self._settings_form.setVerticalSpacing(
-            8
+            4
+        )
+        self._settings_form.setHorizontalSpacing(
+            12
         )
         self.settings_layout.addLayout(
             self._settings_form,
@@ -504,7 +548,7 @@ class MainWindow(QMainWindow):
             "applyButton"
         )
         self._apply_button.setMinimumWidth(
-            220
+            280
         )
         self._apply_button.clicked.connect(
             self._apply
@@ -557,7 +601,7 @@ class MainWindow(QMainWindow):
 
         self.settings_layout.addLayout(
             right_panel,
-            0,
+            2,
         )
 
         self.spinDoubleTap = QSpinBox()
@@ -1585,11 +1629,7 @@ class MainWindow(QMainWindow):
         ):
             widget.deleteLater()
 
-        self.bindingEditor.setTitle(
-            self.i18n.tr(
-                "binding.editor"
-            )
-        )
+        # 标题改由右栏外部 _editor_title 显示（滚动区外，不被遮挡）
 
         self._gesture_widgets = {}
         self._trigger_chord = ()
@@ -2831,6 +2871,12 @@ class MainWindow(QMainWindow):
         self._left_title.setText(
             self.i18n.tr(
                 "left.title"
+            )
+        )
+
+        self._editor_title.setText(
+            self.i18n.tr(
+                "binding.editor"
             )
         )
 
