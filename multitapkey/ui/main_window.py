@@ -79,17 +79,17 @@ _THEME_QSS = {
         " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
         "#bindingCard[selected=\"true\"] { background: #E6F1FB;"
         " border: 0.5px solid #185FA5; }"
-        "#bindingCardName { font-size: 13px; font-weight: 500;"
+        "#bindingCardName { font-size: 14px; font-weight: 500;"
         " color: #2C2C2A; background: transparent; }"
-        "#bindingCardSummary { font-size: 12px; color: #5F5E5A;"
+        "#bindingCardSummary { font-size: 13px; color: #444441;"
         " background: transparent; }"
         "#gestureCard { background: #FFFFFF;"
         " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
-        "#gestureName { font-size: 12px; color: #5F5E5A;"
-        " background: transparent; }"
-        "#gestureValue { font-size: 13px; font-weight: 500;"
+        "#gestureName { font-size: 13px; font-weight: 500;"
         " color: #2C2C2A; background: transparent; }"
-        "#gestureParam { font-size: 11px; color: #888780;"
+        "#gestureValue { font-size: 14px; font-weight: 500;"
+        " color: #2C2C2A; background: transparent; }"
+        "#gestureParam { font-size: 12px; color: #5F5E5A;"
         " background: transparent; }"
         "QComboBox, QSpinBox { background: #FFFFFF;"
         " color: #2C2C2A; border: 0.5px solid #D3D1C7;"
@@ -98,6 +98,11 @@ _THEME_QSS = {
         " color: #2C2C2A; selection-background-color: #E6F1FB; }"
         "QCheckBox { color: #2C2C2A; background: transparent;"
         " border: none; }"
+        "QCheckBox::indicator { width: 16px; height: 16px;"
+        " border-radius: 4px; border: 1px solid #9AA0A6;"
+        " background: #E8E8E8; }"
+        "QCheckBox::indicator:checked { background: #1a6cff;"
+        " border-color: #1a6cff; }"
         "#leftTitle { font-size: 14px; font-weight: 500;"
         " color: #2C2C2A; }"
         "#editorTitle { font-size: 15px; font-weight: 500;"
@@ -109,6 +114,9 @@ _THEME_QSS = {
         "QPushButton:hover { background: #F1EFE8; }"
         "#applyButton { font-size: 16px; min-height: 48px;"
         " border-radius: 8px; }"
+        "#gestureDeleteBtn { background: #E24B4A; color: #FFFFFF;"
+        " border: none; }"
+        "#gestureDeleteBtn:hover { background: #A32D2D; }"
     ),
     "dark": (
         "QMainWindow { background: #1E1E1E; }"
@@ -127,17 +135,17 @@ _THEME_QSS = {
         " border: 0.5px solid #3C3C3C; border-radius: 8px; }"
         "#bindingCard[selected=\"true\"] { background: #1F3B57;"
         " border: 0.5px solid #378ADD; }"
-        "#bindingCardName { font-size: 13px; font-weight: 500;"
+        "#bindingCardName { font-size: 14px; font-weight: 500;"
         " color: #E0E0E0; background: transparent; }"
-        "#bindingCardSummary { font-size: 12px; color: #9AA0A6;"
+        "#bindingCardSummary { font-size: 13px; color: #B4B2A9;"
         " background: transparent; }"
         "#gestureCard { background: #2B2B2B;"
         " border: 0.5px solid #3C3C3C; border-radius: 8px; }"
-        "#gestureName { font-size: 12px; color: #9AA0A6;"
-        " background: transparent; }"
-        "#gestureValue { font-size: 13px; font-weight: 500;"
+        "#gestureName { font-size: 13px; font-weight: 500;"
+        " color: #B4B2A9; background: transparent; }"
+        "#gestureValue { font-size: 14px; font-weight: 500;"
         " color: #E0E0E0; background: transparent; }"
-        "#gestureParam { font-size: 11px; color: #888780;"
+        "#gestureParam { font-size: 12px; color: #9AA0A6;"
         " background: transparent; }"
         "QComboBox, QSpinBox { background: #2B2B2B;"
         " color: #E0E0E0; border: 0.5px solid #3C3C3C;"
@@ -146,6 +154,11 @@ _THEME_QSS = {
         " color: #E0E0E0; selection-background-color: #1F3B57; }"
         "QCheckBox { color: #E0E0E0; background: transparent;"
         " border: none; }"
+        "QCheckBox::indicator { width: 16px; height: 16px;"
+        " border-radius: 4px; border: 1px solid #888780;"
+        " background: #3C3C3C; }"
+        "QCheckBox::indicator:checked { background: #1a6cff;"
+        " border-color: #1a6cff; }"
         "#leftTitle { font-size: 14px; font-weight: 500;"
         " color: #E0E0E0; }"
         "#editorTitle { font-size: 15px; font-weight: 500;"
@@ -157,6 +170,9 @@ _THEME_QSS = {
         "QPushButton:hover { background: #3C3C3C; }"
         "#applyButton { font-size: 16px; min-height: 48px;"
         " border-radius: 8px; }"
+        "#gestureDeleteBtn { background: #A32D2D; color: #FFFFFF;"
+        " border: none; }"
+        "#gestureDeleteBtn:hover { background: #501313; }"
         "QMenu { background: #2B2B2B; color: #E0E0E0;"
         " border: 0.5px solid #3C3C3C; }"
         "QMenu::item:selected { background: #1F3B57; }"
@@ -794,9 +810,18 @@ class MainWindow(QMainWindow):
 
         self._theme_resolved = resolved
 
-        self.setStyleSheet(
-            _THEME_QSS[resolved]
-        )
+        # 应用级样式：主窗口与所有弹窗（消息框/输入框/录制器/引导）
+        # 统一跟随主题，避免弹窗停留在系统深色样式。
+        app = QApplication.instance()
+
+        if app is not None:
+            app.setStyleSheet(
+                _THEME_QSS[resolved]
+            )
+        else:
+            self.setStyleSheet(
+                _THEME_QSS[resolved]
+            )
 
         # 强制刷新全部子控件，避免样式表切换后一半控件
         # 停留在旧主题（黑底白字/白底浅字混排）
@@ -1089,25 +1114,31 @@ class MainWindow(QMainWindow):
         )
         dialog.setTextValue("")
 
-        ok_button = dialog.button(
-            QDialogButtonBox.StandardButton.Ok
+        # QInputDialog 没有 button()，需从其内部的 QDialogButtonBox 取按钮
+        button_box = dialog.findChild(
+            QDialogButtonBox
         )
-        if ok_button is not None:
-            ok_button.setText(
-                self.i18n.tr(
-                    "recorder.ok"
-                )
-            )
 
-        cancel_button = dialog.button(
-            QDialogButtonBox.StandardButton.Cancel
-        )
-        if cancel_button is not None:
-            cancel_button.setText(
-                self.i18n.tr(
-                    "recorder.cancel"
-                )
+        if button_box is not None:
+            ok_button = button_box.button(
+                QDialogButtonBox.StandardButton.Ok
             )
+            if ok_button is not None:
+                ok_button.setText(
+                    self.i18n.tr(
+                        "recorder.ok"
+                    )
+                )
+
+            cancel_button = button_box.button(
+                QDialogButtonBox.StandardButton.Cancel
+            )
+            if cancel_button is not None:
+                cancel_button.setText(
+                    self.i18n.tr(
+                        "recorder.cancel"
+                    )
+                )
 
         if (
             dialog.exec()
@@ -1877,64 +1908,22 @@ class MainWindow(QMainWindow):
         )
 
         if key != "hold":
-            menu_button = QPushButton(
-                "⋯"
-            )
-            menu_button.setObjectName(
-                "gestureMenuBtn"
-            )
-            menu_button.setFixedWidth(
-                38
-            )
-
-            menu = QMenu(
-                menu_button
-            )
-            act_edit = menu.addAction(
+            delete_button = QPushButton(
                 self.i18n.tr(
-                    "gesture.edit"
+                    "gesture.delete"
                 )
             )
-            act_test = menu.addAction(
-                self.i18n.tr(
-                    "button.test"
-                )
+            delete_button.setObjectName(
+                "gestureDeleteBtn"
             )
-            act_delete = menu.addAction(
-                self.i18n.tr(
-                    "binding.remove_tap"
-                )
-            )
-
-            act_edit.triggered.connect(
-                lambda _checked=False,
-                k=key:
-                self._record_gesture(k)
-            )
-            act_test.triggered.connect(
-                lambda _checked=False,
-                k=key:
-                self._test_gesture(k)
-            )
-            act_delete.triggered.connect(
+            delete_button.clicked.connect(
                 lambda _checked=False,
                 k=key:
                 self._remove_tap_level(k)
             )
 
-            menu_button.clicked.connect(
-                lambda _checked=False,
-                m=menu,
-                b=menu_button:
-                m.exec(
-                    b.mapToGlobal(
-                        b.rect().bottomLeft()
-                    )
-                )
-            )
-
             head.addWidget(
-                menu_button
+                delete_button
             )
 
         layout.addLayout(
@@ -2563,6 +2552,74 @@ class MainWindow(QMainWindow):
             return
 
         profile = self._working_profile()
+
+        binding = profile[
+            "bindings"
+        ][
+            self._current_binding_index
+        ]
+
+        trigger_action = binding[
+            "trigger"
+        ]
+        trigger_keys = (
+            trigger_action.get(
+                "keys",
+                [],
+            )
+        )
+
+        trigger = (
+            chord_display(
+                trigger_keys
+            )
+            if trigger_keys
+            else self.i18n.tr(
+                "binding.no_trigger"
+            )
+        )
+
+        box = QMessageBox(
+            self
+        )
+        box.setWindowTitle(
+            self.i18n.tr(
+                "binding.delete.title"
+            )
+        )
+        box.setText(
+            self.i18n.tr(
+                "binding.delete.message",
+                trigger=trigger,
+            )
+        )
+        box.setIcon(
+            QMessageBox.Icon.Warning
+        )
+
+        delete_button = box.addButton(
+            self.i18n.tr(
+                "binding.delete.confirm"
+            ),
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        cancel_button = box.addButton(
+            self.i18n.tr(
+                "recorder.cancel"
+            ),
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(
+            cancel_button
+        )
+
+        box.exec()
+
+        if (
+            box.clickedButton()
+            != delete_button
+        ):
+            return
 
         del profile[
             "bindings"
