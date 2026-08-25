@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -212,8 +213,18 @@ class MainWindow(QMainWindow):
             self.bindingEditor
         )
 
+        # 编辑器包一层滚动区：内容再高也不会把窗口撑大、
+        # 把底部按钮挤出屏幕（小屏幕友好）。
+        self.editor_scroll = QScrollArea()
+        self.editor_scroll.setWidgetResizable(
+            True
+        )
+        self.editor_scroll.setWidget(
+            self.bindingEditor
+        )
+
         content.addWidget(
-            self.bindingEditor,
+            self.editor_scroll,
             2,
         )
 

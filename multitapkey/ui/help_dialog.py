@@ -32,7 +32,7 @@ class HelpDialog(QDialog):
 
         self.resize(
             660,
-            560,
+            580,
         )
 
         layout = QVBoxLayout(
@@ -74,31 +74,26 @@ class HelpDialog(QDialog):
             return label
 
         content_layout.addWidget(
+            body("help.intro")
+        )
+
+        content_layout.addWidget(
             heading(
                 "help.section.bind"
             )
         )
 
-        for key in (
-            "help.bind.step1",
-            "help.bind.step2",
-            "help.bind.step3",
-            "help.bind.note",
-        ):
-            content_layout.addWidget(
-                body(key)
-            )
-
         content_layout.addWidget(
             heading(
-                "help.section.mouse"
+                "help.bind.how1_title"
             )
         )
 
         for key in (
-            "help.mouse.step1",
-            "help.mouse.step2",
-            "help.mouse.step3",
+            "help.bind.how1_step1",
+            "help.bind.how1_step2",
+            "help.bind.how1_step3",
+            "help.bind.how1_tip",
         ):
             content_layout.addWidget(
                 body(key)
@@ -106,15 +101,41 @@ class HelpDialog(QDialog):
 
         content_layout.addWidget(
             heading(
-                "help.section.tips"
+                "help.bind.how2_title"
             )
         )
 
         content_layout.addWidget(
             body(
-                "help.tips.text"
+                "help.bind.how2_text"
             )
         )
+
+        content_layout.addWidget(
+            body(
+                "help.bind.note"
+            )
+        )
+
+        content_layout.addWidget(
+            body(
+                "help.bind.limit"
+            )
+        )
+
+        content_layout.addWidget(
+            heading(
+                "help.section.settings"
+            )
+        )
+
+        for key in (
+            "help.settings.trigger",
+            "help.settings.pause",
+        ):
+            content_layout.addWidget(
+                body(key)
+            )
 
         content_layout.addStretch()
 
