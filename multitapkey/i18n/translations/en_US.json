@@ -72,5 +72,18 @@
   "config.error.invalid_language": "Unsupported language: {language}.",
   "config.error.invalid_json": "The configuration file contains invalid JSON.",
   "binding.add.title": "Cannot Add Binding",
-  "binding.add.no_key": "No unused trigger key is available in the quick-add list."
+  "binding.add.no_key": "No unused trigger key is available in the quick-add list.",
+  "button.help": "Usage Guide",
+  "help.title": "Usage Guide",
+  "help.section.bind": "Bind gestures to other software",
+  "help.bind.step1": "1. Open the target app (e.g. a screenshot tool) and start its hotkey recorder — it will ask you to press a key.",
+  "help.bind.step2": "2. Switch back to MultiTapKey and click the Test button of the gesture you want (e.g. \"Test Long\").",
+  "help.bind.step3": "3. Switch back to the target app — it will record the output key of that gesture (e.g. F5).",
+  "help.bind.note": "Why not just hold the mouse button to record? The mouse hardware sends F24 at the instant you press it, and the target app sees F24 immediately — this is a system-level behavior that cannot be intercepted. So we do it the other way around: let the app record the key that MultiTapKey emits.",
+  "help.section.mouse": "Make the mouse work without G HUB (on-board memory)",
+  "help.mouse.step1": "1. In Logitech G HUB, assign the mouse button to F24.",
+  "help.mouse.step2": "2. Turn on On-Board Memory Mode and save the profile to the mouse.",
+  "help.mouse.step3": "3. After that, the mouse works even when G HUB is closed.",
+  "help.section.tips": "Notes",
+  "help.tips.text": "If the target app ignores program-sent keys, try this: press and hold the mouse button first, then open the recorder — after the long-press threshold, MultiTapKey will emit the output key."
 }

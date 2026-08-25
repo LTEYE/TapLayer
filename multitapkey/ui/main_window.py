@@ -38,6 +38,7 @@ from multitapkey.core.config_store import (
 )
 from multitapkey.i18n.manager import I18nManager
 from .capture import CaptureKeyDialog
+from .help_dialog import HelpDialog
 
 
 class MainWindow(QMainWindow):
@@ -75,6 +76,10 @@ class MainWindow(QMainWindow):
         )
 
         self._current_binding_index: int | None = None
+
+        self._profile_label = None
+        self._tr_buttons: dict = {}
+        self._tray = None
 
         self._build_ui()
 
@@ -122,12 +127,14 @@ class MainWindow(QMainWindow):
 
         profile_row = QHBoxLayout()
 
-        profile_row.addWidget(
-            QLabel(
-                self.i18n.tr(
-                    "profile.label"
-                )
+        self._profile_label = QLabel(
+            self.i18n.tr(
+                "profile.label"
             )
+        )
+
+        profile_row.addWidget(
+            self._profile_label
         )
 
         self.profileCombo = QComboBox()
@@ -182,6 +189,7 @@ class MainWindow(QMainWindow):
             button.clicked.connect(
                 handler
             )
+            self._tr_buttons[key] = button
             button_row.addWidget(
                 button
             )
@@ -220,7 +228,9 @@ class MainWindow(QMainWindow):
             )
         )
 
-        settings_layout = QFormLayout(
+        self._settings_group = settings
+
+        self.settings_layout = QFormLayout(
             settings
         )
 
@@ -278,28 +288,28 @@ class MainWindow(QMainWindow):
             self._startup_changed
         )
 
-        settings_layout.addRow(
+        self.settings_layout.addRow(
             self.i18n.tr(
                 "settings.double_tap"
             ),
             self.spinDoubleTap,
         )
 
-        settings_layout.addRow(
+        self.settings_layout.addRow(
             self.i18n.tr(
                 "settings.hold"
             ),
             self.spinHold,
         )
 
-        settings_layout.addRow(
+        self.settings_layout.addRow(
             self.i18n.tr(
                 "settings.language"
             ),
             self.languageCombo,
         )
 
-        settings_layout.addRow(
+        self.settings_layout.addRow(
             self.i18n.tr(
                 "settings.startup"
             ),
@@ -348,6 +358,7 @@ class MainWindow(QMainWindow):
             button.clicked.connect(
                 handler
             )
+            self._tr_buttons[key] = button
             action_row.addWidget(
                 button
             )
@@ -371,6 +382,10 @@ class MainWindow(QMainWindow):
                 "button.restore_default",
                 self._restore_default,
             ),
+            (
+                "button.help",
+                self._show_help,
+            ),
         ):
             button = QPushButton(
                 self.i18n.tr(key)
@@ -378,6 +393,7 @@ class MainWindow(QMainWindow):
             button.clicked.connect(
                 handler
             )
+            self._tr_buttons[key] = button
             io_row.addWidget(
                 button
             )
@@ -1426,6 +1442,178 @@ class MainWindow(QMainWindow):
         self._refresh_binding_list()
         self._load_settings()
         self.refresh_status()
+
+        new_language = (
+            new_config.settings.language
+        )
+
+        if (
+            self.i18n.requested_language()
+            != new_language
+        ):
+            self.i18n.set_language(
+                new_language
+            )
+            self._retranslate_ui()
+
+            if self._tray is not None:
+                self._tray.refresh()
+
+    # ------------------------------------------------------------------
+    # Language / help
+    # ------------------------------------------------------------------
+
+    def attach_tray(
+        self,
+        tray,
+    ) -> None:
+        self._tray = tray
+
+    def _show_help(
+        self,
+    ) -> None:
+        dialog = HelpDialog(
+            self.i18n,
+            self,
+        )
+
+        dialog.exec()
+
+    def _retranslate_ui(
+        self,
+    ) -> None:
+        self.setWindowTitle(
+            self.i18n.tr(
+                "app.title"
+            )
+        )
+
+        self.refresh_status()
+
+        if self._profile_label is not None:
+            self._profile_label.setText(
+                self.i18n.tr(
+                    "profile.label"
+                )
+            )
+
+        for key, button in (
+            self._tr_buttons.items()
+        ):
+            button.setText(
+                self.i18n.tr(key)
+            )
+
+        self.languageCombo.setItemText(
+            0,
+            self.i18n.tr(
+                "language.system"
+            ),
+        )
+        self.languageCombo.setItemText(
+            1,
+            self.i18n.tr(
+                "language.zh_CN"
+            ),
+        )
+        self.languageCombo.setItemText(
+            2,
+            self.i18n.tr(
+                "language.en_US"
+            ),
+        )
+
+        self.startupCheck.setText(
+            self.i18n.tr(
+                "startup.checkbox"
+            )
+        )
+
+        field_keys = {
+            self.spinDoubleTap: (
+                "settings.double_tap"
+            ),
+            self.spinHold: (
+                "settings.hold"
+            ),
+            self.languageCombo: (
+                "settings.language"
+            ),
+            self.startupCheck: (
+                "settings.startup"
+            ),
+        }
+
+        for i in range(
+            self.settings_layout.rowCount()
+        ):
+            field_item = (
+                self.settings_layout.itemAt(
+                    i,
+                    QFormLayout.FieldRole,
+                )
+            )
+
+            label_item = (
+                self.settings_layout.itemAt(
+                    i,
+                    QFormLayout.LabelRole,
+                )
+            )
+
+            if (
+                field_item is None
+                or label_item is None
+            ):
+                continue
+
+            key = field_keys.get(
+                field_item.widget()
+            )
+
+            label = label_item.widget()
+
+            if (
+                key is not None
+                and label is not None
+            ):
+                label.setText(
+                    self.i18n.tr(key)
+                )
+
+        if self._settings_group is not None:
+            self._settings_group.setTitle(
+                self.i18n.tr(
+                    "settings.group"
+                )
+            )
+
+        self._refresh_binding_list()
+
+        if (
+            self._current_binding_index
+            is not None
+        ):
+            bindings = (
+                self._working_profile()[
+                    "bindings"
+                ]
+            )
+
+            if (
+                0
+                <= self._current_binding_index
+                < len(bindings)
+            ):
+                self._load_binding_editor(
+                    bindings[
+                        self._current_binding_index
+                    ]
+                )
+            else:
+                self._clear_editor()
+        else:
+            self._clear_editor()
 
     def import_config(
         self,

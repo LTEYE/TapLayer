@@ -72,5 +72,18 @@
   "config.error.invalid_language": "不支持的语言：{language}。",
   "config.error.invalid_json": "配置文件包含无效 JSON。",
   "binding.add.title": "无法添加绑定",
-  "binding.add.no_key": "快速添加列表中没有可用的未占用触发键。"
+  "binding.add.no_key": "快速添加列表中没有可用的未占用触发键。",
+  "button.help": "使用引导",
+  "help.title": "使用引导",
+  "help.section.bind": "把手势绑定到其他软件",
+  "help.bind.step1": "1. 打开目标软件（如截屏软件），进入它的\"录制热键\"状态，等它提示按下按键。",
+  "help.bind.step2": "2. 切回 MultiTapKey 窗口，点击对应手势的\"测试\"按钮（例如\"测试长按\"）。",
+  "help.bind.step3": "3. 切回目标软件，它会录到你绑定的输出键（如 F5）。",
+  "help.bind.note": "为什么不能直接按住鼠标录制：鼠标硬件在按下瞬间就会发出 F24，目标软件会立刻看到它（这是系统机制，无法拦截）。所以要反过来：让软件录 MultiTapKey 发出的键。",
+  "help.section.mouse": "让鼠标不依赖 G HUB 也能用（板载内存）",
+  "help.mouse.step1": "1. 在罗技 G HUB 中，把鼠标按键指派为 F24。",
+  "help.mouse.step2": "2. 打开\"板载内存模式\"，把配置保存到鼠标。",
+  "help.mouse.step3": "3. 之后关闭 G HUB 也能正常使用。",
+  "help.section.tips": "补充说明",
+  "help.tips.text": "如果目标软件不接受程序发出的按键（个别软件会过滤），可以试试：先按住鼠标不放，再打开录制器，等长按到时间后 MultiTapKey 会发出输出键。"
 }

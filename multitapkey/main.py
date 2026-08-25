@@ -157,6 +157,10 @@ def main() -> int:
         i18n=i18n,
     )
 
+    window.attach_tray(
+        tray
+    )
+
     hook_ok = engine.start()
 
     if hook_ok and config is not None:
