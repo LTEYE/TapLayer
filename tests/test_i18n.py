@@ -95,7 +95,7 @@ def test_translation_lookup():
         manager.tr(
             "status.running"
         )
-        == "● Running"
+        == "Running"
     )
 
 

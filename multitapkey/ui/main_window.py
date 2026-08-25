@@ -13,12 +13,14 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -140,6 +142,26 @@ class MainWindow(QMainWindow):
             )
         )
 
+        self.setStyleSheet(
+            "#statusLabel, #dirtyLabel { font-weight: 500; }"
+            "#bindingList { background: transparent; border: none; }"
+            "#bindingList::item { border: none; background: transparent; }"
+            "QScrollArea { border: none; background: transparent; }"
+            "#bindingCard { background: #FFFFFF;"
+            " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
+            "#bindingCard[selected=\"true\"] { background: #E6F1FB;"
+            " border: 0.5px solid #185FA5; }"
+            "#bindingCardName { font-size: 13px; font-weight: 500;"
+            " color: #2C2C2A; }"
+            "#bindingCardSummary { font-size: 12px; color: #5F5E5A; }"
+            "#gestureCard { background: #FFFFFF;"
+            " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
+            "#gestureName { font-size: 12px; color: #5F5E5A; }"
+            "#gestureValue { font-size: 13px; font-weight: 500;"
+            " color: #2C2C2A; }"
+            "#gestureParam { font-size: 11px; color: #888780; }"
+        )
+
         self.resize(
             900,
             700,
@@ -157,16 +179,34 @@ class MainWindow(QMainWindow):
             root
         )
 
+        self._title_label = QLabel(
+            self.i18n.tr(
+                "app.title"
+            )
+        )
+
         self.statusLabel = QLabel()
         self.statusLabel.setObjectName(
             "statusLabel"
         )
 
-        main_layout.addWidget(
-            self.statusLabel
+        self._dirty_label = QLabel()
+        self._dirty_label.setObjectName(
+            "dirtyLabel"
+        )
+        self._dirty_label.hide()
+
+        self._pause_button = QPushButton()
+        self._pause_button.clicked.connect(
+            self._toggle_pause
         )
 
-        profile_row = QHBoxLayout()
+        top_bar = QHBoxLayout()
+
+        top_bar.addWidget(
+            self._title_label
+        )
+        top_bar.addStretch()
 
         self._profile_label = QLabel(
             self.i18n.tr(
@@ -174,7 +214,7 @@ class MainWindow(QMainWindow):
             )
         )
 
-        profile_row.addWidget(
+        top_bar.addWidget(
             self._profile_label
         )
 
@@ -187,7 +227,7 @@ class MainWindow(QMainWindow):
             self._profile_changed
         )
 
-        profile_row.addWidget(
+        top_bar.addWidget(
             self.profileCombo
         )
 
@@ -199,19 +239,36 @@ class MainWindow(QMainWindow):
         self._add_profile_button.clicked.connect(
             self._add_profile
         )
-        profile_row.addWidget(
+        top_bar.addWidget(
             self._add_profile_button
         )
 
-        profile_row.addStretch()
+        top_bar.addWidget(
+            self._dirty_label
+        )
+        top_bar.addWidget(
+            self.statusLabel
+        )
+        top_bar.addWidget(
+            self._pause_button
+        )
 
         main_layout.addLayout(
-            profile_row
+            top_bar
         )
 
         content = QHBoxLayout()
 
         left = QVBoxLayout()
+
+        self._left_title = QLabel(
+            self.i18n.tr(
+                "left.title"
+            )
+        )
+        left.addWidget(
+            self._left_title
+        )
 
         self.bindingList = QListWidget()
         self.bindingList.setObjectName(
@@ -492,26 +549,62 @@ class MainWindow(QMainWindow):
             text = self.i18n.tr(
                 "status.hook_failed"
             )
+            color = "#A32D2D"
         elif not self._config_valid:
             text = self.i18n.tr(
                 "status.config_failed"
             )
+            color = "#A32D2D"
         elif self.engine.paused:
             text = self.i18n.tr(
                 "status.paused"
             )
+            color = "#5F5E5A"
         elif self.engine.active:
             text = self.i18n.tr(
                 "status.running"
             )
+            color = "#3B6D11"
         else:
             text = self.i18n.tr(
                 "status.paused"
             )
+            color = "#5F5E5A"
 
         self.statusLabel.setText(
-            text
+            "● " + text
         )
+        self.statusLabel.setStyleSheet(
+            f"color: {color};"
+        )
+
+        self._update_pause_button()
+
+    def _toggle_pause(
+        self,
+    ) -> None:
+        if self.engine.paused:
+            self.engine.resume()
+        else:
+            self.engine.pause()
+
+        self.refresh_status()
+
+    def _update_pause_button(
+        self,
+    ) -> None:
+        if self.engine.paused:
+            self._pause_button.setText(
+                self.i18n.tr(
+                    "button.resume"
+                )
+            )
+        else:
+            self._pause_button.setText(
+                self.i18n.tr(
+                    "button.pause"
+                )
+            )
 
     def refresh_all(
         self,
@@ -922,35 +1015,65 @@ class MainWindow(QMainWindow):
         item,
         binding: dict,
     ) -> None:
-        container = QWidget()
+        container = QFrame()
+        container.setObjectName(
+            "bindingCard"
+        )
 
-        row_layout = QHBoxLayout(
+        card_layout = QVBoxLayout(
             container
         )
-        row_layout.setContentsMargins(
+        card_layout.setContentsMargins(
+            8,
             6,
-            2,
+            8,
             6,
-            2,
+        )
+        card_layout.setSpacing(
+            4
         )
 
-        label = QLabel(
-            self._binding_summary(
-                binding
+        head = QHBoxLayout()
+
+        trigger_action = binding[
+            "trigger"
+        ]
+        trigger_keys = (
+            trigger_action.get(
+                "keys",
+                [],
             )
         )
-        row_layout.addWidget(
-            label,
-            1,
+
+        trigger = (
+            chord_display(
+                trigger_keys
+            )
+            if trigger_keys
+            else self.i18n.tr(
+                "binding.no_trigger"
+            )
         )
 
-        enabled_check = QCheckBox(
+        name_label = QLabel(
+            trigger
+        )
+        name_label.setObjectName(
+            "bindingCardName"
+        )
+        head.addWidget(
+            name_label
+        )
+        head.addStretch()
+
+        enabled_check = QCheckBox()
+        enabled_check.setChecked(
+            binding["enabled"]
+        )
+        enabled_check.setToolTip(
             self.i18n.tr(
                 "binding.enabled"
             )
-        )
-        enabled_check.setChecked(
-            binding["enabled"]
         )
         enabled_check.stateChanged.connect(
             lambda _state,
@@ -961,8 +1084,24 @@ class MainWindow(QMainWindow):
                 c,
             )
         )
-        row_layout.addWidget(
+        head.addWidget(
             enabled_check
+        )
+
+        card_layout.addLayout(
+            head
+        )
+
+        summary = QLabel(
+            self._binding_summary(
+                binding
+            )
+        )
+        summary.setObjectName(
+            "bindingCardSummary"
+        )
+        card_layout.addWidget(
+            summary
         )
 
         item.setSizeHint(
@@ -985,134 +1124,47 @@ class MainWindow(QMainWindow):
 
         self._mark_editor_changed()
 
-        if (
-            self._current_binding_index
-            is not None
-        ):
-            bindings = (
-                self._working_profile()[
-                    "bindings"
-                ]
-            )
-
-            if (
-                0
-                <= self._current_binding_index
-                < len(bindings)
-                and bindings[
-                    self._current_binding_index
-                ]
-                is binding
-                and self._enabled_widget
-                is not None
-            ):
-                self._enabled_widget.blockSignals(
-                    True
-                )
-                self._enabled_widget.setChecked(
-                    binding["enabled"]
-                )
-                self._enabled_widget.blockSignals(
-                    False
-                )
-
     def _update_binding_row(
         self,
         item,
         binding: dict,
     ) -> None:
-        container = (
-            self.bindingList.itemWidget(
-                item
-            )
+        # 卡片结构下直接重建整行（触发键名/摘要/启用勾选一起刷新）
+        self._set_binding_row(
+            item,
+            binding,
         )
-
-        if container is None:
-            return
-
-        label = container.findChild(
-            QLabel
-        )
-        check = container.findChild(
-            QCheckBox
-        )
-
-        if label is not None:
-            label.setText(
-                self._binding_summary(
-                    binding
-                )
-            )
-
-        if check is not None:
-            check.blockSignals(
-                True
-            )
-            check.setChecked(
-                binding["enabled"]
-            )
-            check.blockSignals(
-                False
-            )
 
     def _binding_summary(
         self,
         binding: dict,
     ) -> str:
-        trigger_action = binding[
-            "trigger"
-        ]
-
-        trigger_keys = (
-            trigger_action.get(
-                "keys",
-                [],
-            )
-        )
-
-        trigger = (
-            chord_display(
-                trigger_keys
-            )
-            if trigger_keys
-            else self.i18n.tr(
-                "binding.no_trigger"
-            )
-        )
-
         gestures = binding[
             "gestures"
         ]
-
-        parts = []
 
         taps = gestures.get(
             "taps",
             {},
         )
 
+        lines = []
+
         for raw_count in sorted(
             taps,
             key=int,
         ):
-            parts.append(
-                f"{raw_count}:"
-                f"{self._action_summary(taps[raw_count])}"
+            lines.append(
+                f"{self.i18n.tr('gesture.tap', count=raw_count)}"
+                f"  {self._action_summary(taps[raw_count])}"
             )
 
-        parts.append(
-            "H:"
-            + self._action_summary(
-                gestures.get(
-                    "hold",
-                    {},
-                )
-            )
+        lines.append(
+            f"{self.i18n.tr('gesture.hold')}"
+            f"  {self._action_summary(gestures.get('hold', {}))}"
         )
 
-        return (
-            f"{trigger} → {' '.join(parts)}"
-        )
+        return "\n".join(lines)
 
     def _action_summary(
         self,
@@ -1120,14 +1172,21 @@ class MainWindow(QMainWindow):
     ) -> str:
         if action.get("type") != "chord":
             return self.i18n.tr(
-                "binding.disabled"
+                "gesture.off"
+            )
+
+        keys = action.get(
+            "keys",
+            [],
+        )
+
+        if not keys:
+            return self.i18n.tr(
+                "gesture.unset"
             )
 
         return chord_display(
-            action.get(
-                "keys",
-                [],
-            )
+            keys
         )
 
     def _binding_selected(
@@ -1151,6 +1210,43 @@ class MainWindow(QMainWindow):
         self._load_binding_editor(
             binding
         )
+
+        self._update_card_selection(
+            row
+        )
+
+    def _update_card_selection(
+        self,
+        row: int,
+    ) -> None:
+        for i in range(
+            self.bindingList.count()
+        ):
+            item = self.bindingList.item(
+                i
+            )
+
+            widget = (
+                self.bindingList.itemWidget(
+                    item
+                )
+            )
+
+            if widget is None:
+                continue
+
+            widget.setProperty(
+                "selected",
+                i == row,
+            )
+
+            style = widget.style()
+            style.unpolish(
+                widget
+            )
+            style.polish(
+                widget
+            )
 
     # ------------------------------------------------------------------
     # Binding editor
@@ -1207,18 +1303,6 @@ class MainWindow(QMainWindow):
     ) -> None:
         self._clear_editor()
 
-        enabled = QCheckBox(
-            self.i18n.tr(
-                "binding.enabled"
-            )
-        )
-        enabled.setChecked(
-            binding["enabled"]
-        )
-        enabled.stateChanged.connect(
-            self._mark_editor_changed
-        )
-
         trigger_action = binding[
             "trigger"
         ]
@@ -1229,33 +1313,58 @@ class MainWindow(QMainWindow):
             )
         )
 
+        # 触发键卡片
+        trigger_card = QFrame()
+        trigger_card.setObjectName(
+            "gestureCard"
+        )
+        trigger_row = QHBoxLayout(
+            trigger_card
+        )
+        trigger_row.setContentsMargins(
+            10,
+            8,
+            10,
+            8,
+        )
+
+        trigger_label = QLabel(
+            self.i18n.tr(
+                "binding.trigger"
+            )
+        )
+        trigger_label.setObjectName(
+            "gestureName"
+        )
+        trigger_row.addWidget(
+            trigger_label
+        )
+
+        self._trigger_value = QLabel()
+        self._trigger_value.setObjectName(
+            "gestureValue"
+        )
+        trigger_row.addWidget(
+            self._trigger_value,
+            1,
+        )
+
         self._trigger_button = QPushButton()
+        self._trigger_button.setObjectName(
+            "gestureEditBtn"
+        )
         self._trigger_button.clicked.connect(
             self._record_trigger
         )
+        trigger_row.addWidget(
+            self._trigger_button
+        )
+
         self._update_trigger_button()
 
-        top = QFormLayout()
-
-        top.addRow(
-            self.i18n.tr(
-                "binding.enabled"
-            ),
-            enabled,
+        self.editor_layout.addWidget(
+            trigger_card
         )
-
-        top.addRow(
-            self.i18n.tr(
-                "binding.trigger"
-            ),
-            self._trigger_button,
-        )
-
-        self.editor_layout.addLayout(
-            top
-        )
-
-        self._enabled_widget = enabled
 
         self._gesture_widgets = {}
 
@@ -1314,18 +1423,30 @@ class MainWindow(QMainWindow):
             self._add_tap_button
         )
 
+        self._update_gesture_param_labels()
+
     def _build_gesture_group(
         self,
         key: str,
         title: str,
         action: dict,
-    ) -> QGroupBox:
-        group = QGroupBox(
-            title
+    ) -> QFrame:
+        card = QFrame()
+        card.setObjectName(
+            "gestureCard"
         )
 
         layout = QVBoxLayout(
-            group
+            card
+        )
+        layout.setContentsMargins(
+            10,
+            8,
+            10,
+            8,
+        )
+        layout.setSpacing(
+            6
         )
 
         disabled = QCheckBox(
@@ -1349,76 +1470,38 @@ class MainWindow(QMainWindow):
             == "chord"
         ) else ()
 
-        button = QPushButton()
+        head = QHBoxLayout()
 
-        button.clicked.connect(
+        name_label = QLabel(
+            title
+        )
+        name_label.setObjectName(
+            "gestureName"
+        )
+        head.addWidget(
+            name_label
+        )
+
+        value_label = QLabel()
+        value_label.setObjectName(
+            "gestureValue"
+        )
+        head.addWidget(
+            value_label,
+            1,
+        )
+
+        edit_button = QPushButton()
+        edit_button.setObjectName(
+            "gestureEditBtn"
+        )
+        edit_button.clicked.connect(
             lambda _checked=False,
             k=key:
             self._record_gesture(k)
         )
-
-        self._gesture_widgets[key] = {
-            "disabled": disabled,
-            "button": button,
-            "chord": chord,
-        }
-
-        if key != "hold":
-            header = QHBoxLayout()
-
-            delete_button = QPushButton(
-                "✕"
-            )
-            delete_button.setToolTip(
-                self.i18n.tr(
-                    "binding.remove_tap"
-                )
-            )
-            delete_button.setFixedWidth(
-                28
-            )
-            delete_button.setStyleSheet(
-                "background-color: #d33;"
-                "color: #ffffff;"
-                "font-weight: bold;"
-                "border: none;"
-            )
-            delete_button.clicked.connect(
-                lambda _checked=False,
-                k=key:
-                self._remove_tap_level(k)
-            )
-
-            header.addStretch()
-            header.addWidget(
-                delete_button
-            )
-
-            layout.addLayout(
-                header
-            )
-
-        disabled.stateChanged.connect(
-            self._toggle_gesture
-        )
-        disabled.stateChanged.connect(
-            self._mark_editor_changed
-        )
-
-        row = QHBoxLayout()
-
-        left = QVBoxLayout()
-
-        left.addWidget(
-            disabled
-        )
-        left.addWidget(
-            button
-        )
-
-        row.addLayout(
-            left,
-            1,
+        head.addWidget(
+            edit_button
         )
 
         test_button = QPushButton(
@@ -1434,20 +1517,114 @@ class MainWindow(QMainWindow):
             k=key:
             self._test_gesture(k)
         )
-
-        row.addWidget(
+        head.addWidget(
             test_button
         )
 
+        if key != "hold":
+            menu_button = QPushButton(
+                "⋯"
+            )
+            menu_button.setObjectName(
+                "gestureMenuBtn"
+            )
+            menu_button.setFixedWidth(
+                32
+            )
+
+            menu = QMenu(
+                menu_button
+            )
+            act_edit = menu.addAction(
+                self.i18n.tr(
+                    "gesture.edit"
+                )
+            )
+            act_test = menu.addAction(
+                self.i18n.tr(
+                    "button.test"
+                )
+            )
+            act_delete = menu.addAction(
+                self.i18n.tr(
+                    "binding.remove_tap"
+                )
+            )
+
+            act_edit.triggered.connect(
+                lambda _checked=False,
+                k=key:
+                self._record_gesture(k)
+            )
+            act_test.triggered.connect(
+                lambda _checked=False,
+                k=key:
+                self._test_gesture(k)
+            )
+            act_delete.triggered.connect(
+                lambda _checked=False,
+                k=key:
+                self._remove_tap_level(k)
+            )
+
+            menu_button.clicked.connect(
+                lambda _checked=False,
+                m=menu,
+                b=menu_button:
+                m.exec(
+                    b.mapToGlobal(
+                        b.rect().bottomLeft()
+                    )
+                )
+            )
+
+            head.addWidget(
+                menu_button
+            )
+
         layout.addLayout(
-            row
+            head
+        )
+
+        param_row = QHBoxLayout()
+
+        param_label = QLabel()
+        param_label.setObjectName(
+            "gestureParam"
+        )
+        param_row.addWidget(
+            param_label,
+            1,
+        )
+
+        param_row.addWidget(
+            disabled
+        )
+
+        layout.addLayout(
+            param_row
+        )
+
+        self._gesture_widgets[key] = {
+            "disabled": disabled,
+            "button": edit_button,
+            "value": value_label,
+            "param": param_label,
+            "chord": chord,
+        }
+
+        disabled.stateChanged.connect(
+            self._toggle_gesture
+        )
+        disabled.stateChanged.connect(
+            self._mark_editor_changed
         )
 
         self._update_gesture_widget_state(
             key
         )
 
-        return group
+        return card
 
     def _update_gesture_widget_state(
         self,
@@ -1462,21 +1639,79 @@ class MainWindow(QMainWindow):
             widgets["disabled"].isChecked()
         )
         button = widgets["button"]
+        value = widgets["value"]
 
-        if disabled or not chord:
-            button.setText(
+        if disabled:
+            value.setText(
                 self.i18n.tr(
-                    "action.select"
+                    "gesture.off"
                 )
             )
-            button.setEnabled(
-                not disabled
-            )
-        else:
             button.setText(
-                chord_display(chord)
+                self.i18n.tr(
+                    "gesture.edit"
+                )
             )
             button.setEnabled(True)
+        elif chord:
+            value.setText(
+                chord_display(chord)
+            )
+            button.setText(
+                self.i18n.tr(
+                    "gesture.edit"
+                )
+            )
+            button.setEnabled(True)
+        else:
+            value.setText(
+                self.i18n.tr(
+                    "gesture.unset"
+                )
+            )
+            button.setText(
+                self.i18n.tr(
+                    "gesture.set"
+                )
+            )
+            button.setEnabled(True)
+
+    def _update_gesture_param_labels(
+        self,
+    ) -> None:
+        if not self._gesture_widgets:
+            return
+
+        settings = self._working[
+            "settings"
+        ]
+
+        interval = settings.get(
+            "double_tap_interval_ms",
+            250,
+        )
+        hold_time = settings.get(
+            "hold_threshold_ms",
+            500,
+        )
+
+        for key, widgets in (
+            self._gesture_widgets.items()
+        ):
+            if key == "hold":
+                text = self.i18n.tr(
+                    "binding.hold_time",
+                    value=hold_time,
+                )
+            else:
+                text = self.i18n.tr(
+                    "binding.interval",
+                    value=interval,
+                )
+
+            widgets["param"].setText(
+                text
+            )
 
     def _toggle_gesture(
         self,
@@ -1628,15 +1863,25 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         if self._trigger_chord:
-            self._trigger_button.setText(
+            self._trigger_value.setText(
                 chord_display(
                     self._trigger_chord
                 )
             )
-        else:
             self._trigger_button.setText(
                 self.i18n.tr(
-                    "action.select"
+                    "gesture.edit"
+                )
+            )
+        else:
+            self._trigger_value.setText(
+                self.i18n.tr(
+                    "gesture.unset"
+                )
+            )
+            self._trigger_button.setText(
+                self.i18n.tr(
+                    "gesture.set"
                 )
             )
 
@@ -1695,19 +1940,39 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        if (
+        dirty = (
             self._editor_dirty
             or self._is_dirty()
-        ):
+        )
+
+        if dirty:
+            self._apply_button.setEnabled(
+                True
+            )
             self._apply_button.setStyleSheet(
                 "background-color: #1a6cff;"
                 "color: #ffffff;"
                 "font-weight: bold;"
             )
+
+            self._dirty_label.setText(
+                "● "
+                + self.i18n.tr(
+                    "status.unsaved"
+                )
+            )
+            self._dirty_label.setStyleSheet(
+                "color: #BA7517;"
+            )
+            self._dirty_label.show()
         else:
+            self._apply_button.setEnabled(
+                False
+            )
             self._apply_button.setStyleSheet(
                 ""
             )
+            self._dirty_label.hide()
 
     def _settings_changed(
         self,
@@ -1764,6 +2029,8 @@ class MainWindow(QMainWindow):
         self._sync_gesture_overlay(
             new_config.settings.enable_gesture_overlay
         )
+
+        self._update_gesture_param_labels()
 
         new_language = (
             new_config.settings.language
@@ -1837,9 +2104,7 @@ class MainWindow(QMainWindow):
             self._current_binding_index
         ]
 
-        binding[
-            "enabled"
-        ] = self._enabled_widget.isChecked()
+        # 绑定启用状态由左侧卡片勾选直接管理（_binding_enabled_toggled）
 
         binding["trigger"] = {
             "type": "chord",
@@ -2216,7 +2481,21 @@ class MainWindow(QMainWindow):
             )
         )
 
+        self._title_label.setText(
+            self.i18n.tr(
+                "app.title"
+            )
+        )
+
+        self._left_title.setText(
+            self.i18n.tr(
+                "left.title"
+            )
+        )
+
         self.refresh_status()
+
+        self._update_apply_highlight()
 
         if self._profile_label is not None:
             self._profile_label.setText(
