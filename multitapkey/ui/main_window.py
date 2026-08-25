@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import copy
+import logging
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -47,6 +48,9 @@ from multitapkey.i18n.manager import I18nManager
 from .gesture_overlay import GestureOverlay
 from .help_dialog import HelpDialog
 from .key_chord_recorder import KeyChordRecorder
+
+
+log = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -99,6 +103,20 @@ class MainWindow(QMainWindow):
 
         # 编辑器脏标记（区别于 working!=saved，控件变更立即置位）
         self._editor_dirty = False
+
+        # 设置即时生效的防抖定时器（spin 连续变化时合并写入）
+        self._settings_timer = QTimer(
+            self
+        )
+        self._settings_timer.setSingleShot(
+            True
+        )
+        self._settings_timer.setInterval(
+            250
+        )
+        self._settings_timer.timeout.connect(
+            self._commit_settings
+        )
 
         self._build_ui()
 
@@ -292,6 +310,9 @@ class MainWindow(QMainWindow):
         self.spinDoubleTap.setSingleStep(
             10,
         )
+        self.spinDoubleTap.valueChanged.connect(
+            self._settings_changed
+        )
 
         self.spinHold = QSpinBox()
         self.spinHold.setObjectName(
@@ -303,6 +324,9 @@ class MainWindow(QMainWindow):
         )
         self.spinHold.setSingleStep(
             10,
+        )
+        self.spinHold.valueChanged.connect(
+            self._settings_changed
         )
 
         self.languageCombo = QComboBox()
@@ -324,6 +348,9 @@ class MainWindow(QMainWindow):
             ),
             "en_US",
         )
+        self.languageCombo.currentIndexChanged.connect(
+            self._settings_changed
+        )
 
         self.startupCheck = QCheckBox(
             self.i18n.tr(
@@ -335,6 +362,10 @@ class MainWindow(QMainWindow):
             self._startup_changed
         )
 
+        self.startupCheck.stateChanged.connect(
+            self._settings_changed
+        )
+
         self.overlayCheck = QCheckBox(
             self.i18n.tr(
                 "settings.overlay"
@@ -342,7 +373,7 @@ class MainWindow(QMainWindow):
         )
 
         self.overlayCheck.stateChanged.connect(
-            self._overlay_toggled
+            self._settings_changed
         )
 
         self.settings_layout.addRow(
@@ -543,30 +574,7 @@ class MainWindow(QMainWindow):
     def _sync_controls_to_working(
         self,
     ) -> None:
-        settings = self._working[
-            "settings"
-        ]
-
-        settings[
-            "double_tap_interval_ms"
-        ] = self.spinDoubleTap.value()
-
-        settings[
-            "hold_threshold_ms"
-        ] = self.spinHold.value()
-
-        settings[
-            "language"
-        ] = self.languageCombo.currentData()
-
-        settings[
-            "start_with_windows"
-        ] = self.startupCheck.isChecked()
-
-        settings[
-            "enable_gesture_overlay"
-        ] = self.overlayCheck.isChecked()
-
+        self._sync_settings_to_working()
         self._sync_current_binding()
 
     def _reload_working_from_config(
@@ -726,18 +734,18 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # 新配置档 = 一套独立模板（默认绑定，触发键未设置）
+        # 新配置档 = 空档，不预装任何热键
         profiles[name] = {
-            "bindings": [
-                copy.deepcopy(
-                    self._template_binding_dict()
-                )
-            ],
+            "bindings": [],
         }
 
         self._rebuild_profile_combo(
             current_profile=name
         )
+
+        self._current_binding_index = None
+        self._refresh_binding_list()
+        self._clear_editor()
 
         self._mark_editor_changed()
 
@@ -1705,14 +1713,106 @@ class MainWindow(QMainWindow):
                 ""
             )
 
-    def _overlay_toggled(
+    def _settings_changed(
         self,
         *_args,
     ) -> None:
-        self._mark_editor_changed()
+        # 设置即时生效：防抖后提交（落盘 + 引擎即时应用）
+        self._settings_timer.start()
 
-        # 开关型设置：即时生效，无需再点"应用"
-        self._apply()
+    def _commit_settings(
+        self,
+    ) -> None:
+        if not self._config_valid:
+            return
+
+        self._sync_settings_to_working()
+
+        base = to_dict(
+            self._config
+        )
+
+        base["settings"] = copy.deepcopy(
+            self._working["settings"]
+        )
+
+        try:
+            new_config = (
+                validate_and_build(
+                    base
+                )
+            )
+        except ConfigError:
+            return
+
+        try:
+            save_config(
+                new_config
+            )
+
+            self.engine.apply_config(
+                new_config,
+                self.engine.profile_name,
+            )
+        except Exception:
+            log.exception(
+                "settings commit failed"
+            )
+            return
+
+        self._config = new_config
+        self._saved = copy.deepcopy(
+            to_dict(new_config)
+        )
+
+        self._sync_gesture_overlay(
+            new_config.settings.enable_gesture_overlay
+        )
+
+        new_language = (
+            new_config.settings.language
+        )
+
+        if (
+            self.i18n.requested_language()
+            != new_language
+        ):
+            self.i18n.set_language(
+                new_language
+            )
+            self._retranslate_ui()
+
+            if self._tray is not None:
+                self._tray.refresh()
+
+        self._update_apply_highlight()
+
+    def _sync_settings_to_working(
+        self,
+    ) -> None:
+        settings = self._working[
+            "settings"
+        ]
+
+        settings[
+            "double_tap_interval_ms"
+        ] = self.spinDoubleTap.value()
+
+        settings[
+            "hold_threshold_ms"
+        ] = self.spinHold.value()
+
+        settings[
+            "language"
+        ] = self.languageCombo.currentData()
+
+        settings[
+            "start_with_windows"
+        ] = self.startupCheck.isChecked()
+
+        settings[
+            "enable_gesture_overlay"
+        ] = self.overlayCheck.isChecked()
 
     def _sync_current_binding(
         self,
@@ -1876,6 +1976,16 @@ class MainWindow(QMainWindow):
             "settings"
         ]
 
+        self.spinDoubleTap.blockSignals(
+            True
+        )
+        self.spinHold.blockSignals(
+            True
+        )
+        self.languageCombo.blockSignals(
+            True
+        )
+
         self.spinDoubleTap.setValue(
             settings[
                 "double_tap_interval_ms"
@@ -1898,6 +2008,16 @@ class MainWindow(QMainWindow):
             self.languageCombo.setCurrentIndex(
                 index
             )
+
+        self.spinDoubleTap.blockSignals(
+            False
+        )
+        self.spinHold.blockSignals(
+            False
+        )
+        self.languageCombo.blockSignals(
+            False
+        )
 
         self.startupCheck.blockSignals(
             True

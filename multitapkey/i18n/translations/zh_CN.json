@@ -42,7 +42,7 @@
   "settings.overlay": "显示输出动作",
   "button.add": "添加绑定",
   "button.delete": "删除绑定",
-  "button.apply": "应用",
+  "button.apply": "保存配置",
   "button.test_single": "测试单击",
   "button.test_double": "测试双击",
   "button.test_triple": "测试三击",

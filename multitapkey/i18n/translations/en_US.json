@@ -42,7 +42,7 @@
   "settings.overlay": "Show output action on screen",
   "button.add": "Add Binding",
   "button.delete": "Delete Binding",
-  "button.apply": "Apply",
+  "button.apply": "Save Config",
   "button.test_single": "Test Single",
   "button.test_double": "Test Double",
   "button.test_triple": "Test Triple",
