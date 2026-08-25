@@ -368,49 +368,28 @@ class MainWindow(QMainWindow):
 
         action_row = QHBoxLayout()
 
-        for key, handler in (
-            (
-                "button.apply",
-                self._apply,
-            ),
-            (
-                "button.test_single",
-                lambda: self._test_gesture(
-                    "1"
-                ),
-            ),
-            (
-                "button.test_double",
-                lambda: self._test_gesture(
-                    "2"
-                ),
-            ),
-            (
-                "button.test_triple",
-                lambda: self._test_gesture(
-                    "3"
-                ),
-            ),
-            (
-                "button.test_long",
-                lambda: self._test_gesture(
-                    "hold"
-                ),
-            ),
-        ):
-            button = QPushButton(
-                self.i18n.tr(key)
+        apply_button = QPushButton(
+            self.i18n.tr(
+                "button.apply"
             )
-            button.clicked.connect(
-                handler
-            )
-            self._tr_buttons[key] = button
-            action_row.addWidget(
-                button
-            )
+        )
+        apply_button.clicked.connect(
+            self._apply
+        )
+        self._tr_buttons[
+            "button.apply"
+        ] = apply_button
+        action_row.addWidget(
+            apply_button
+        )
+
+        self._test_row = QHBoxLayout()
 
         main_layout.addLayout(
             action_row
+        )
+        main_layout.addLayout(
+            self._test_row
         )
 
         io_row = QHBoxLayout()
@@ -682,6 +661,15 @@ class MainWindow(QMainWindow):
                 )
                 self.profileCombo.blockSignals(
                     False
+                )
+                QMessageBox.information(
+                    self,
+                    self.i18n.tr(
+                        "profile.label"
+                    ),
+                    self.i18n.tr(
+                        "profile.keep.message"
+                    ),
                 )
                 return
 
@@ -1010,6 +998,8 @@ class MainWindow(QMainWindow):
             self._add_tap_button
         )
 
+        self._rebuild_test_buttons()
+
         self._mark_editor_changed()
 
     def _build_gesture_group(
@@ -1060,6 +1050,41 @@ class MainWindow(QMainWindow):
             "button": button,
             "chord": chord,
         }
+
+        if key != "hold":
+            header = QHBoxLayout()
+
+            delete_button = QPushButton(
+                "✕"
+            )
+            delete_button.setToolTip(
+                self.i18n.tr(
+                    "binding.remove_tap"
+                )
+            )
+            delete_button.setFixedWidth(
+                28
+            )
+            delete_button.setStyleSheet(
+                "background-color: #d33;"
+                "color: #ffffff;"
+                "font-weight: bold;"
+                "border: none;"
+            )
+            delete_button.clicked.connect(
+                lambda _checked=False,
+                k=key:
+                self._remove_tap_level(k)
+            )
+
+            header.addStretch()
+            header.addWidget(
+                delete_button
+            )
+
+            layout.addLayout(
+                header
+            )
 
         disabled.stateChanged.connect(
             self._toggle_gesture
@@ -1186,6 +1211,122 @@ class MainWindow(QMainWindow):
         )
 
         self._mark_editor_changed()
+
+    def _remove_tap_level(
+        self,
+        key: str,
+    ) -> None:
+        self._sync_controls_to_working()
+
+        if (
+            self._current_binding_index
+            is None
+        ):
+            return
+
+        binding = self._working_profile()[
+            "bindings"
+        ][
+            self._current_binding_index
+        ]
+
+        taps = binding[
+            "gestures"
+        ]["taps"]
+
+        if len(taps) <= 1:
+            QMessageBox.information(
+                self,
+                self.i18n.tr(
+                    "binding.editor"
+                ),
+                self.i18n.tr(
+                    "binding.min_taps"
+                ),
+            )
+            return
+
+        taps.pop(key, None)
+
+        self._load_binding_editor(
+            binding
+        )
+
+        self._mark_editor_changed()
+
+    def _rebuild_test_buttons(
+        self,
+    ) -> None:
+        while self._test_row.count():
+            item = self._test_row.takeAt(0)
+            widget = item.widget()
+
+            if widget is not None:
+                widget.deleteLater()
+
+        if (
+            self._current_binding_index
+            is None
+        ):
+            self._test_row.addStretch()
+            return
+
+        bindings = self._working_profile()[
+            "bindings"
+        ]
+
+        if not (
+            0
+            <= self._current_binding_index
+            < len(bindings)
+        ):
+            self._test_row.addStretch()
+            return
+
+        binding = bindings[
+            self._current_binding_index
+        ]
+
+        taps = binding[
+            "gestures"
+        ].get(
+            "taps",
+            {},
+        )
+
+        for raw_count in sorted(
+            taps,
+            key=int,
+        ):
+            button = QPushButton(
+                self.i18n.tr(
+                    "gesture.tap",
+                    count=raw_count,
+                )
+            )
+            button.clicked.connect(
+                lambda _checked=False,
+                c=raw_count:
+                self._test_gesture(c)
+            )
+            self._test_row.addWidget(
+                button
+            )
+
+        hold_button = QPushButton(
+            self.i18n.tr(
+                "gesture.hold"
+            )
+        )
+        hold_button.clicked.connect(
+            lambda _checked=False:
+            self._test_gesture("hold")
+        )
+        self._test_row.addWidget(
+            hold_button
+        )
+
+        self._test_row.addStretch()
 
     def _record_chord(
         self,
@@ -1651,6 +1792,13 @@ class MainWindow(QMainWindow):
             new_config.settings.enable_gesture_overlay
         )
 
+        self.statusLabel.setText(
+            "✓ "
+            + self.i18n.tr(
+                "status.saved"
+            )
+        )
+
     # ------------------------------------------------------------------
     # Gesture overlay (OSD)
     # ------------------------------------------------------------------
@@ -2089,16 +2237,21 @@ class MainWindow(QMainWindow):
             ),
             QMessageBox.ButtonRole.RejectRole,
         )
+        cancel_button = box.addButton(
+            self.i18n.tr(
+                "close.cancel"
+            ),
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
         box.setDefaultButton(
             tray_button
         )
 
         box.exec()
 
-        if (
-            box.clickedButton()
-            == quit_button
-        ):
+        clicked = box.clickedButton()
+
+        if clicked == quit_button:
             # 彻底退出：进程必须真正结束，不留后台残留。
             self.force_exit = True
             self.hide()
@@ -2106,9 +2259,14 @@ class MainWindow(QMainWindow):
             event.accept()
             return
 
-        # 最小化到托盘：窗口隐藏，程序继续在后台运行。
+        if clicked == tray_button:
+            # 最小化到托盘：窗口隐藏，程序继续在后台运行。
+            event.ignore()
+            self.hide()
+            return
+
+        # 取消（含点弹窗右上角叉）：什么都不做，窗口保持原样。
         event.ignore()
-        self.hide()
 
     def showEvent(
         self,

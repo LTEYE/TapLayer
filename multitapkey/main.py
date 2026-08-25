@@ -13,10 +13,12 @@ from PySide6.QtWidgets import (
 
 from multitapkey.core.config_models import (
     ConfigError,
+    default_config,
 )
 from multitapkey.core.config_store import (
     config_dir,
     load_config,
+    save_config,
 )
 from multitapkey.core.engine import Engine
 from multitapkey.i18n.manager import I18nManager
@@ -125,6 +127,23 @@ def main() -> int:
     i18n = I18nManager(
         language
     )
+
+    if config_error:
+        # 旧版本或不支持的配置：明确提示后用 v2 默认配置替换，
+        # 避免"加载失败→应用永远无法保存"的死锁。
+        QMessageBox.warning(
+            None,
+            i18n.tr(
+                "config.version_incompatible.title"
+            ),
+            i18n.tr(
+                "config.version_incompatible.message"
+            ),
+        )
+
+        config = default_config()
+        save_config(config)
+        config_error = False
 
     keyboard_backend = (
         WindowsKeyboardBackend()

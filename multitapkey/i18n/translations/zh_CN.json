@@ -101,5 +101,12 @@
   "close.title": "关闭 MultiTapKey",
   "close.message": "关闭窗口后程序仍在后台（托盘）运行。要彻底退出，还是最小化到托盘？",
   "close.quit": "彻底退出",
-  "close.to_tray": "最小化到托盘"
+  "close.to_tray": "最小化到托盘",
+  "close.cancel": "取消",
+  "status.saved": "已保存",
+  "profile.keep.message": "已保留当前配置档，未切换。",
+  "binding.remove_tap": "删除该连击级别",
+  "binding.min_taps": "至少保留一个连击级别。",
+  "config.version_incompatible.title": "配置版本不兼容",
+  "config.version_incompatible.message": "检测到旧版本或不支持的配置文件。MultiTapKey 将创建新的默认配置，请重新配置。旧配置不会被转换。"
 }

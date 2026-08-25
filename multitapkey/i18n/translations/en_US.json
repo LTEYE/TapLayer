@@ -101,5 +101,12 @@
   "close.title": "Close MultiTapKey",
   "close.message": "Closing the window keeps the app running in the tray. Do you want to quit completely or minimize to tray?",
   "close.quit": "Quit",
-  "close.to_tray": "Minimize to Tray"
+  "close.to_tray": "Minimize to Tray",
+  "close.cancel": "Cancel",
+  "status.saved": "Saved",
+  "profile.keep.message": "Profile kept; switch cancelled.",
+  "binding.remove_tap": "Remove this tap level",
+  "binding.min_taps": "At least one tap level is required.",
+  "config.version_incompatible.title": "Configuration Version Incompatible",
+  "config.version_incompatible.message": "An old or unsupported configuration file was found. MultiTapKey will create a new default configuration — please reconfigure. The old configuration is not converted."
 }
