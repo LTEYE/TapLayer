@@ -626,11 +626,7 @@ class MainWindow(QMainWindow):
         )
 
         for name in names:
-            icon = self._profile_icon(
-                name == active
-            )
             self.profileCombo.addItem(
-                icon,
                 name,
                 name,
             )
@@ -649,68 +645,6 @@ class MainWindow(QMainWindow):
         self.profileCombo.blockSignals(
             False
         )
-
-    @staticmethod
-    def _profile_icon(
-        active: bool,
-    ):
-        from PySide6.QtCore import (
-            QPoint,
-            Qt,
-        )
-        from PySide6.QtGui import (
-            QColor,
-            QIcon,
-            QPainter,
-            QPixmap,
-            QPolygon,
-        )
-
-        pixmap = QPixmap(
-            14,
-            14,
-        )
-        pixmap.fill(
-            Qt.GlobalColor.transparent
-        )
-
-        painter = QPainter(
-            pixmap
-        )
-
-        if active:
-            painter.setBrush(
-                QColor("#1a6cff")
-            )
-            painter.setPen(
-                Qt.PenStyle.NoPen
-            )
-            painter.drawPolygon(
-                QPolygon(
-                    [
-                        QPoint(2, 1),
-                        QPoint(13, 7),
-                        QPoint(2, 13),
-                    ]
-                )
-            )
-        else:
-            painter.setBrush(
-                QColor("#9aa0a6")
-            )
-            painter.setPen(
-                Qt.PenStyle.NoPen
-            )
-            painter.drawRect(
-                2,
-                2,
-                10,
-                10,
-            )
-
-        painter.end()
-
-        return QIcon(pixmap)
 
     def _add_profile(
         self,
@@ -894,13 +828,13 @@ class MainWindow(QMainWindow):
         for binding in profile[
             "bindings"
         ]:
-            item = QListWidgetItem(
-                self._binding_summary(
-                    binding
-                )
-            )
+            item = QListWidgetItem()
             self.bindingList.addItem(
                 item
+            )
+            self._set_binding_row(
+                item,
+                binding,
             )
 
         self.bindingList.blockSignals(
@@ -930,6 +864,144 @@ class MainWindow(QMainWindow):
         else:
             self._current_binding_index = None
             self._clear_editor()
+
+    def _set_binding_row(
+        self,
+        item,
+        binding: dict,
+    ) -> None:
+        container = QWidget()
+
+        row_layout = QHBoxLayout(
+            container
+        )
+        row_layout.setContentsMargins(
+            6,
+            2,
+            6,
+            2,
+        )
+
+        label = QLabel(
+            self._binding_summary(
+                binding
+            )
+        )
+        row_layout.addWidget(
+            label,
+            1,
+        )
+
+        enabled_check = QCheckBox(
+            self.i18n.tr(
+                "binding.enabled"
+            )
+        )
+        enabled_check.setChecked(
+            binding["enabled"]
+        )
+        enabled_check.stateChanged.connect(
+            lambda _state,
+            b=binding,
+            c=enabled_check:
+            self._binding_enabled_toggled(
+                b,
+                c,
+            )
+        )
+        row_layout.addWidget(
+            enabled_check
+        )
+
+        item.setSizeHint(
+            container.sizeHint()
+        )
+
+        self.bindingList.setItemWidget(
+            item,
+            container,
+        )
+
+    def _binding_enabled_toggled(
+        self,
+        binding: dict,
+        check,
+    ) -> None:
+        binding["enabled"] = (
+            check.isChecked()
+        )
+
+        self._mark_editor_changed()
+
+        if (
+            self._current_binding_index
+            is not None
+        ):
+            bindings = (
+                self._working_profile()[
+                    "bindings"
+                ]
+            )
+
+            if (
+                0
+                <= self._current_binding_index
+                < len(bindings)
+                and bindings[
+                    self._current_binding_index
+                ]
+                is binding
+                and self._enabled_widget
+                is not None
+            ):
+                self._enabled_widget.blockSignals(
+                    True
+                )
+                self._enabled_widget.setChecked(
+                    binding["enabled"]
+                )
+                self._enabled_widget.blockSignals(
+                    False
+                )
+
+    def _update_binding_row(
+        self,
+        item,
+        binding: dict,
+    ) -> None:
+        container = (
+            self.bindingList.itemWidget(
+                item
+            )
+        )
+
+        if container is None:
+            return
+
+        label = container.findChild(
+            QLabel
+        )
+        check = container.findChild(
+            QCheckBox
+        )
+
+        if label is not None:
+            label.setText(
+                self._binding_summary(
+                    binding
+                )
+            )
+
+        if check is not None:
+            check.blockSignals(
+                True
+            )
+            check.setChecked(
+                binding["enabled"]
+            )
+            check.blockSignals(
+                False
+            )
 
     def _binding_summary(
         self,
@@ -1090,6 +1162,9 @@ class MainWindow(QMainWindow):
         )
         enabled.setChecked(
             binding["enabled"]
+        )
+        enabled.stateChanged.connect(
+            self._mark_editor_changed
         )
 
         trigger_action = binding[
@@ -1649,26 +1724,15 @@ class MainWindow(QMainWindow):
             else:
                 gestures["taps"][key] = action
 
-        self.bindingList.blockSignals(
-            True
+        item = self.bindingList.item(
+            self._current_binding_index
         )
 
-        if (
-            0
-            <= self._current_binding_index
-            < self.bindingList.count()
-        ):
-            self.bindingList.item(
-                self._current_binding_index
-            ).setText(
-                self._binding_summary(
-                    binding
-                )
+        if item is not None:
+            self._update_binding_row(
+                item,
+                binding,
             )
-
-        self.bindingList.blockSignals(
-            False
-        )
 
     # ------------------------------------------------------------------
     # Chord recording (KeyChordRecorder, shared by trigger & action)
