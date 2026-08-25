@@ -61,6 +61,113 @@ _PROFILE_NAME_KEYS = {
     "Work": "profile.name.Work",
 }
 
+_THEME_QSS = {
+    "light": (
+        "#statusLabel, #dirtyLabel { font-weight: 500; }"
+        "#bindingList { background: #FFFFFF; border: none; }"
+        "#bindingList::item { border: none; background: #FFFFFF; }"
+        "QScrollArea { border: none; background: #FFFFFF; }"
+        "QScrollArea > QWidget > QWidget { background: #FFFFFF; }"
+        "#bindingEditor, #settings_group, QGroupBox {"
+        " background: #FFFFFF; border: 0.5px solid #D3D1C7;"
+        " border-radius: 8px; margin-top: 6px; }"
+        "#bindingCard { background: #FFFFFF;"
+        " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
+        "#bindingCard[selected=\"true\"] { background: #E6F1FB;"
+        " border: 0.5px solid #185FA5; }"
+        "#bindingCardName { font-size: 13px; font-weight: 500;"
+        " color: #2C2C2A; background: transparent; }"
+        "#bindingCardSummary { font-size: 12px; color: #5F5E5A;"
+        " background: transparent; }"
+        "#gestureCard { background: #FFFFFF;"
+        " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
+        "#gestureName { font-size: 12px; color: #5F5E5A;"
+        " background: transparent; }"
+        "#gestureValue { font-size: 13px; font-weight: 500;"
+        " color: #2C2C2A; background: transparent; }"
+        "#gestureParam { font-size: 11px; color: #888780;"
+        " background: transparent; }"
+        "QComboBox, QSpinBox, QCheckBox { background: #FFFFFF;"
+        " color: #2C2C2A; border: 0.5px solid #D3D1C7;"
+        " border-radius: 4px; }"
+        "QPushButton { background: #FFFFFF; color: #2C2C2A;"
+        " border: 0.5px solid #D3D1C7; border-radius: 4px;"
+        " padding: 3px 10px; }"
+        "QPushButton:hover { background: #F1EFE8; }"
+    ),
+    "dark": (
+        "#statusLabel, #dirtyLabel { font-weight: 500; }"
+        "#bindingList { background: #1E1E1E; border: none; }"
+        "#bindingList::item { border: none; background: #1E1E1E; }"
+        "QScrollArea { border: none; background: #1E1E1E; }"
+        "QScrollArea > QWidget > QWidget { background: #1E1E1E; }"
+        "#bindingEditor, #settings_group, QGroupBox {"
+        " background: #1E1E1E; border: 0.5px solid #3C3C3C;"
+        " border-radius: 8px; margin-top: 6px; }"
+        "#bindingCard { background: #2B2B2B;"
+        " border: 0.5px solid #3C3C3C; border-radius: 8px; }"
+        "#bindingCard[selected=\"true\"] { background: #1F3B57;"
+        " border: 0.5px solid #378ADD; }"
+        "#bindingCardName { font-size: 13px; font-weight: 500;"
+        " color: #E0E0E0; background: transparent; }"
+        "#bindingCardSummary { font-size: 12px; color: #9AA0A6;"
+        " background: transparent; }"
+        "#gestureCard { background: #2B2B2B;"
+        " border: 0.5px solid #3C3C3C; border-radius: 8px; }"
+        "#gestureName { font-size: 12px; color: #9AA0A6;"
+        " background: transparent; }"
+        "#gestureValue { font-size: 13px; font-weight: 500;"
+        " color: #E0E0E0; background: transparent; }"
+        "#gestureParam { font-size: 11px; color: #888780;"
+        " background: transparent; }"
+        "QComboBox, QSpinBox, QCheckBox { background: #2B2B2B;"
+        " color: #E0E0E0; border: 0.5px solid #3C3C3C;"
+        " border-radius: 4px; }"
+        "QComboBox QAbstractItemView { background: #2B2B2B;"
+        " color: #E0E0E0; selection-background-color: #1F3B57; }"
+        "QPushButton { background: #2B2B2B; color: #E0E0E0;"
+        " border: 0.5px solid #3C3C3C; border-radius: 4px;"
+        " padding: 3px 10px; }"
+        "QPushButton:hover { background: #3C3C3C; }"
+        "QMenu { background: #2B2B2B; color: #E0E0E0;"
+        " border: 0.5px solid #3C3C3C; }"
+        "QMenu::item:selected { background: #1F3B57; }"
+        "QListWidget { background: #1E1E1E; }"
+    ),
+}
+
+_THEME_STATUS_COLORS = {
+    "light": {
+        "running": "#3B6D11",
+        "paused": "#5F5E5A",
+        "error": "#A32D2D",
+        "unsaved": "#BA7517",
+    },
+    "dark": {
+        "running": "#97C459",
+        "paused": "#B4B2A9",
+        "error": "#F09595",
+        "unsaved": "#FAC775",
+    },
+}
+
+
+def _system_dark_mode() -> bool:
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        ) as key:
+            value, _ = winreg.QueryValueEx(
+                key,
+                "AppsUseLightTheme",
+            )
+            return value == 0
+    except Exception:
+        return False
+
 
 class MainWindow(QMainWindow):
     def __init__(
@@ -113,6 +220,9 @@ class MainWindow(QMainWindow):
         # 编辑器脏标记（区别于 working!=saved，控件变更立即置位）
         self._editor_dirty = False
 
+        # 当前生效主题（light/dark），由 _apply_theme 维护
+        self._theme_resolved = "light"
+
         # 设置即时生效的防抖定时器（spin 连续变化时合并写入）
         self._settings_timer = QTimer(
             self
@@ -149,39 +259,7 @@ class MainWindow(QMainWindow):
             )
         )
 
-        self.setStyleSheet(
-            "#statusLabel, #dirtyLabel { font-weight: 500; }"
-            "#bindingList { background: #FFFFFF; border: none; }"
-            "#bindingList::item { border: none; background: #FFFFFF; }"
-            "QScrollArea { border: none; background: #FFFFFF; }"
-            "QScrollArea > QWidget > QWidget { background: #FFFFFF; }"
-            "#bindingEditor, #settings_group, QGroupBox {"
-            " background: #FFFFFF; border: 0.5px solid #D3D1C7;"
-            " border-radius: 8px; margin-top: 6px; }"
-            "#bindingCard { background: #FFFFFF;"
-            " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
-            "#bindingCard[selected=\"true\"] { background: #E6F1FB;"
-            " border: 0.5px solid #185FA5; }"
-            "#bindingCardName { font-size: 13px; font-weight: 500;"
-            " color: #2C2C2A; background: transparent; }"
-            "#bindingCardSummary { font-size: 12px; color: #5F5E5A;"
-            " background: transparent; }"
-            "#gestureCard { background: #FFFFFF;"
-            " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
-            "#gestureName { font-size: 12px; color: #5F5E5A;"
-            " background: transparent; }"
-            "#gestureValue { font-size: 13px; font-weight: 500;"
-            " color: #2C2C2A; background: transparent; }"
-            "#gestureParam { font-size: 11px; color: #888780;"
-            " background: transparent; }"
-            "QComboBox, QSpinBox, QCheckBox { background: #FFFFFF;"
-            " color: #2C2C2A; border: 0.5px solid #D3D1C7;"
-            " border-radius: 4px; }"
-            "QPushButton { background: #FFFFFF; color: #2C2C2A;"
-            " border: 0.5px solid #D3D1C7; border-radius: 4px;"
-            " padding: 3px 10px; }"
-            "QPushButton:hover { background: #F1EFE8; }"
-        )
+        self._apply_theme()
 
         self.resize(
             900,
@@ -433,6 +511,29 @@ class MainWindow(QMainWindow):
             self._settings_changed
         )
 
+        self.themeCombo = QComboBox()
+        self.themeCombo.addItem(
+            self.i18n.tr(
+                "theme.system"
+            ),
+            "system",
+        )
+        self.themeCombo.addItem(
+            self.i18n.tr(
+                "theme.dark"
+            ),
+            "dark",
+        )
+        self.themeCombo.addItem(
+            self.i18n.tr(
+                "theme.light"
+            ),
+            "light",
+        )
+        self.themeCombo.currentIndexChanged.connect(
+            self._settings_changed
+        )
+
         self.startupCheck = QCheckBox()
 
         self.startupCheck.stateChanged.connect(
@@ -468,6 +569,13 @@ class MainWindow(QMainWindow):
                 "settings.language"
             ),
             self.languageCombo,
+        )
+
+        self.settings_layout.addRow(
+            self.i18n.tr(
+                "settings.theme"
+            ),
+            self.themeCombo,
         )
 
         self.settings_layout.addRow(
@@ -566,6 +674,70 @@ class MainWindow(QMainWindow):
         self._config_valid = False
         self.refresh_status()
 
+    def _resolved_theme(
+        self,
+    ) -> str:
+        theme = self._working.get(
+            "settings",
+            {},
+        ).get(
+            "theme",
+            "system",
+        )
+
+        if theme == "dark":
+            return "dark"
+
+        if theme == "light":
+            return "light"
+
+        return (
+            "dark"
+            if _system_dark_mode()
+            else "light"
+        )
+
+    def _apply_theme(
+        self,
+    ) -> None:
+        resolved = self._resolved_theme()
+
+        self._theme_resolved = resolved
+
+        self.setStyleSheet(
+            _THEME_QSS[resolved]
+        )
+
+        # 控件未建完时（_build_ui 早期调用）跳过状态刷新
+        if (
+            hasattr(
+                self,
+                "statusLabel",
+            )
+            and self.statusLabel is not None
+        ):
+            self.refresh_status()
+
+        if (
+            hasattr(
+                self,
+                "_apply_button",
+            )
+            and self._apply_button is not None
+        ):
+            self._update_apply_highlight()
+
+    def _theme_color(
+        self,
+        kind: str,
+    ) -> str:
+        return _THEME_STATUS_COLORS[
+            self._theme_resolved
+        ].get(
+            kind,
+            "#5F5E5A",
+        )
+
     def refresh_status(
         self,
     ) -> None:
@@ -573,27 +745,37 @@ class MainWindow(QMainWindow):
             text = self.i18n.tr(
                 "status.hook_failed"
             )
-            color = "#A32D2D"
+            color = self._theme_color(
+                "error"
+            )
         elif not self._config_valid:
             text = self.i18n.tr(
                 "status.config_failed"
             )
-            color = "#A32D2D"
+            color = self._theme_color(
+                "error"
+            )
         elif self.engine.paused:
             text = self.i18n.tr(
                 "status.paused"
             )
-            color = "#5F5E5A"
+            color = self._theme_color(
+                "paused"
+            )
         elif self.engine.active:
             text = self.i18n.tr(
                 "status.running"
             )
-            color = "#3B6D11"
+            color = self._theme_color(
+                "running"
+            )
         else:
             text = self.i18n.tr(
                 "status.paused"
             )
-            color = "#5F5E5A"
+            color = self._theme_color(
+                "paused"
+            )
 
         self.statusLabel.setText(
             "● " + text
@@ -2035,7 +2217,7 @@ class MainWindow(QMainWindow):
                 )
             )
             self._dirty_label.setStyleSheet(
-                "color: #BA7517;"
+                f"color: {self._theme_color('unsaved')};"
             )
             self._dirty_label.show()
         else:
@@ -2105,6 +2287,8 @@ class MainWindow(QMainWindow):
 
         self._update_gesture_param_labels()
 
+        self._apply_theme()
+
         new_language = (
             new_config.settings.language
         )
@@ -2141,6 +2325,10 @@ class MainWindow(QMainWindow):
         settings[
             "language"
         ] = self.languageCombo.currentData()
+
+        settings[
+            "theme"
+        ] = self.themeCombo.currentData()
 
         settings[
             "start_with_windows"
@@ -2319,6 +2507,9 @@ class MainWindow(QMainWindow):
         self.languageCombo.blockSignals(
             True
         )
+        self.themeCombo.blockSignals(
+            True
+        )
 
         self.spinDoubleTap.setValue(
             settings[
@@ -2343,6 +2534,20 @@ class MainWindow(QMainWindow):
                 index
             )
 
+        theme_index = (
+            self.themeCombo.findData(
+                settings.get(
+                    "theme",
+                    "system",
+                )
+            )
+        )
+
+        if theme_index >= 0:
+            self.themeCombo.setCurrentIndex(
+                theme_index
+            )
+
         self.spinDoubleTap.blockSignals(
             False
         )
@@ -2350,6 +2555,9 @@ class MainWindow(QMainWindow):
             False
         )
         self.languageCombo.blockSignals(
+            False
+        )
+        self.themeCombo.blockSignals(
             False
         )
 
@@ -2605,6 +2813,25 @@ class MainWindow(QMainWindow):
             ),
         )
 
+        self.themeCombo.setItemText(
+            0,
+            self.i18n.tr(
+                "theme.system"
+            ),
+        )
+        self.themeCombo.setItemText(
+            1,
+            self.i18n.tr(
+                "theme.dark"
+            ),
+        )
+        self.themeCombo.setItemText(
+            2,
+            self.i18n.tr(
+                "theme.light"
+            ),
+        )
+
         self.startupCheck.setText(
             self.i18n.tr(
                 "startup.checkbox"
@@ -2620,6 +2847,9 @@ class MainWindow(QMainWindow):
             ),
             self.languageCombo: (
                 "settings.language"
+            ),
+            self.themeCombo: (
+                "settings.theme"
             ),
             self.startupCheck: (
                 "settings.startup"

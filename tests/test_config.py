@@ -514,6 +514,40 @@ def test_empty_trigger_allowed_as_unset():
     )
 
 
+def test_theme_missing_defaults_to_system():
+    # 旧配置没有 theme 字段：必须向后兼容，默认 system
+    config = validate_and_build(
+        make_dict()
+    )
+
+    assert (
+        config.settings.theme
+        == "system"
+    )
+
+
+def test_theme_roundtrip():
+    data = make_dict()
+    data["settings"]["theme"] = "dark"
+
+    config = validate_and_build(data)
+
+    assert config.settings.theme == "dark"
+
+    assert (
+        to_dict(config)["settings"]["theme"]
+        == "dark"
+    )
+
+
+def test_theme_invalid_rejected():
+    data = make_dict()
+    data["settings"]["theme"] = "blue"
+
+    with pytest.raises(ConfigError):
+        validate_and_build(data)
+
+
 def test_empty_chord_action_allowed_as_unset():
     """空 chord 动作（\"选择热键\"未设置状态）必须放行，与 disabled 区分。"""
     data = make_dict(

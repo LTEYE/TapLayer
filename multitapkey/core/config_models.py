@@ -58,6 +58,13 @@ SETTINGS_FIELDS = {
     "start_with_windows",
     "language",
     "enable_gesture_overlay",
+    "theme",
+}
+
+THEMES = {
+    "system",
+    "dark",
+    "light",
 }
 
 ROOT_FIELDS = {
@@ -135,6 +142,7 @@ class Settings:
     start_with_windows: bool = False
     language: str = "system"
     enable_gesture_overlay: bool = False
+    theme: str = "system"
 
 
 @dataclass(frozen=True, slots=True)
@@ -560,6 +568,13 @@ def validate_and_build(
     enable_overlay = settings_obj.get(
         "enable_gesture_overlay"
     )
+    theme = settings_obj.get(
+        "theme"
+    )
+
+    if theme is None:
+        # 旧配置没有 theme 字段：默认 system，向后兼容
+        theme = "system"
 
     if type(double_tap) is not int:
         raise ConfigError(
@@ -607,6 +622,13 @@ def validate_and_build(
             expected="bool",
         )
 
+    if theme not in THEMES:
+        raise ConfigError(
+            "invalid_type",
+            field="theme",
+            expected="system|dark|light",
+        )
+
     profiles_obj = _require_dict(
         data.get("profiles"),
         "profiles",
@@ -640,6 +662,7 @@ def validate_and_build(
             start_with_windows=start_with_windows,
             language=language,
             enable_gesture_overlay=enable_overlay,
+            theme=theme,
         ),
         profiles=profiles,
     )
@@ -776,6 +799,7 @@ def to_dict(
             "enable_gesture_overlay": (
                 config.settings.enable_gesture_overlay
             ),
+            "theme": config.settings.theme,
         },
         "profiles": {
             profile.name: {
