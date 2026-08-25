@@ -34,6 +34,9 @@ WM_QUIT = 0x0012
 HC_ACTION = 0
 LLKHF_INJECTED = 0x00000010
 
+# 捕获模式最多持续这么久；超时自动取消，避免界面卡住时永久吞掉所有按键。
+CAPTURE_TIMEOUT_S = 5.0
+
 LRESULT = ctypes.c_ssize_t
 
 
@@ -104,6 +107,7 @@ class WindowsKeyboardBackend:
         self._enabled = False
 
         self._capture_mode = False
+        self._capture_start = 0.0
         self._capture_results: queue.SimpleQueue = queue.SimpleQueue()
 
         self._suppressed_down_vks: set[int] = set()
@@ -134,10 +138,12 @@ class WindowsKeyboardBackend:
 
     def begin_capture(self) -> None:
         self._capture_mode = True
+        self._capture_start = time.monotonic()
         self._drain_capture_results()
 
     def cancel_capture(self) -> None:
         self._capture_mode = False
+        self._suppressed_down_vks.clear()
         self._drain_capture_results()
         self._capture_results.put(
             CaptureResult(kind="cancel")
@@ -279,95 +285,120 @@ class WindowsKeyboardBackend:
         w_param,
         l_param,
     ):
-        if n_code < 0:
-            return user32.CallNextHookEx(
-                None,
-                n_code,
-                w_param,
-                l_param,
+        try:
+            if n_code < 0:
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            if n_code != HC_ACTION:
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            info = l_param.contents
+
+            # 1. Own injected input: never interpret.
+            if info.dwExtraInfo == INJECTED_MARKER:
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            is_down = w_param in (
+                WM_KEYDOWN,
+                WM_SYSKEYDOWN,
             )
 
-        if n_code != HC_ACTION:
-            return user32.CallNextHookEx(
-                None,
-                n_code,
-                w_param,
-                l_param,
+            is_up = w_param in (
+                WM_KEYUP,
+                WM_SYSKEYUP,
             )
 
-        info = l_param.contents
+            vk = int(info.vkCode)
 
-        # 1. Own injected input: never interpret.
-        if info.dwExtraInfo == INJECTED_MARKER:
-            return user32.CallNextHookEx(
-                None,
-                n_code,
-                w_param,
-                l_param,
-            )
+            # 2. Existing suppression lifecycle takes priority
+            # over capture and trigger configuration.
+            if vk in self._suppressed_down_vks:
+                if is_up:
+                    self._suppressed_down_vks.discard(vk)
 
-        is_down = w_param in (
-            WM_KEYDOWN,
-            WM_SYSKEYDOWN,
-        )
+                    key = vk_to_key(vk)
 
-        is_up = w_param in (
-            WM_KEYUP,
-            WM_SYSKEYUP,
-        )
+                    if (
+                        key is not None
+                        and self._enabled
+                        and vk in self._trigger_vks
+                    ):
+                        self.events.put(
+                            RawKeyEvent(
+                                key=key,
+                                is_down=False,
+                                injected=bool(
+                                    info.flags
+                                    & LLKHF_INJECTED
+                                ),
+                                timestamp=time.monotonic(),
+                            )
+                        )
 
-        vk = int(info.vkCode)
+                return 1
 
-        # 2. Existing suppression lifecycle takes priority
-        # over capture and trigger configuration.
-        if vk in self._suppressed_down_vks:
-            if is_up:
-                self._suppressed_down_vks.discard(vk)
+            # 3. Capture.
+            if (
+                self._capture_mode
+                and is_down
+                and not (
+                    info.flags
+                    & LLKHF_INJECTED
+                )
+            ):
+                # 超时保护：捕获卡住超过上限就自动取消，
+                # 绝不永久吞掉后续按键。
+                if (
+                    time.monotonic()
+                    - self._capture_start
+                    > CAPTURE_TIMEOUT_S
+                ):
+                    self.cancel_capture()
+                    return user32.CallNextHookEx(
+                        None,
+                        n_code,
+                        w_param,
+                        l_param,
+                    )
 
                 key = vk_to_key(vk)
 
-                if (
-                    key is not None
-                    and self._enabled
-                    and vk in self._trigger_vks
-                ):
-                    self.events.put(
-                        RawKeyEvent(
-                            key=key,
-                            is_down=False,
-                            injected=bool(
-                                info.flags
-                                & LLKHF_INJECTED
-                            ),
-                            timestamp=time.monotonic(),
+                if key is None:
+                    # 不认识的键无法绑定：直接放行，继续等待有效键。
+                    # 由上面的超时保护兜底，不会因无效键而永久卡死。
+                    return user32.CallNextHookEx(
+                        None,
+                        n_code,
+                        w_param,
+                        l_param,
+                    )
+
+                self._suppressed_down_vks.add(vk)
+
+                if key == "Esc":
+                    self._capture_mode = False
+                    self._capture_results.put(
+                        CaptureResult(
+                            kind="cancel"
                         )
                     )
+                    return 1
 
-            return 1
-
-        # 3. Capture.
-        if (
-            self._capture_mode
-            and is_down
-            and not (
-                info.flags
-                & LLKHF_INJECTED
-            )
-        ):
-            key = vk_to_key(vk)
-
-            self._suppressed_down_vks.add(vk)
-
-            if key == "Esc":
-                self._capture_mode = False
-                self._capture_results.put(
-                    CaptureResult(
-                        kind="cancel"
-                    )
-                )
-                return 1
-
-            if key is not None:
                 self._capture_mode = False
                 self._capture_results.put(
                     CaptureResult(
@@ -376,40 +407,54 @@ class WindowsKeyboardBackend:
                     )
                 )
 
-            return 1
-
-        # 4. Active trigger.
-        if (
-            self._enabled
-            and vk in self._trigger_vks
-            and is_down
-        ):
-            key = vk_to_key(vk)
-
-            if key is not None:
-                self._suppressed_down_vks.add(vk)
-
-                self.events.put(
-                    RawKeyEvent(
-                        key=key,
-                        is_down=True,
-                        injected=bool(
-                            info.flags
-                            & LLKHF_INJECTED
-                        ),
-                        timestamp=time.monotonic(),
-                    )
-                )
-
                 return 1
 
-        # 5. Unhandled event.
-        return user32.CallNextHookEx(
-            None,
-            n_code,
-            w_param,
-            l_param,
-        )
+            # 4. Active trigger.
+            if (
+                self._enabled
+                and vk in self._trigger_vks
+                and is_down
+            ):
+                key = vk_to_key(vk)
+
+                if key is not None:
+                    self._suppressed_down_vks.add(vk)
+
+                    self.events.put(
+                        RawKeyEvent(
+                            key=key,
+                            is_down=True,
+                            injected=bool(
+                                info.flags
+                                & LLKHF_INJECTED
+                            ),
+                            timestamp=time.monotonic(),
+                        )
+                    )
+
+                    return 1
+
+            # 5. Unhandled event.
+            return user32.CallNextHookEx(
+                None,
+                n_code,
+                w_param,
+                l_param,
+            )
+        except Exception:
+            # 任何意外都“放行”，绝不因报错而吞掉按键（失败开放原则）。
+            log.exception(
+                "keyboard hook callback error; passing event through"
+            )
+            try:
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+            except Exception:
+                return 0
 
     def _drain_capture_results(self) -> None:
         try:
