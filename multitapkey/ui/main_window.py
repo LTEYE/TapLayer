@@ -793,19 +793,44 @@ class MainWindow(QMainWindow):
     def _clear_editor(
         self,
     ) -> None:
-        while self.editor_layout.count():
-            item = self.editor_layout.takeAt(0)
+        self._clear_layout(
+            self.editor_layout
+        )
 
-            widget = item.widget()
-
-            if widget:
-                widget.deleteLater()
+        # 双保险：布局条目清完后，再把面板下所有残留子控件
+        # 一次性删除（Qt 删除控件时自动将其从布局移除）。
+        # 防复发：QFormLayout 的行条目用 widget()/layout()
+        # 都取不到内容，只靠布局递归会漏掉，导致编辑器叠层。
+        for widget in (
+            self.bindingEditor.findChildren(
+                QWidget
+            )
+        ):
+            widget.deleteLater()
 
         self.bindingEditor.setTitle(
             self.i18n.tr(
                 "binding.editor"
             )
         )
+
+    def _clear_layout(
+        self,
+        layout,
+    ) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+
+            widget = item.widget()
+
+            if widget is not None:
+                widget.deleteLater()
+                continue
+
+            sub_layout = item.layout()
+
+            if sub_layout is not None:
+                self._clear_layout(sub_layout)
 
     def _load_binding_editor(
         self,
