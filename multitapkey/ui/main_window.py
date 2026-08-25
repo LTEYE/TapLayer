@@ -63,13 +63,16 @@ _PROFILE_NAME_KEYS = {
 
 _THEME_QSS = {
     "light": (
+        "QMainWindow { background: #F0F0F0; }"
+        "QLabel { color: #2C2C2A; background: transparent; }"
         "#statusLabel, #dirtyLabel { font-weight: 500; }"
         "#bindingList { background: #FFFFFF; border: none; }"
         "#bindingList::item { border: none; background: #FFFFFF; }"
         "QScrollArea { border: none; background: #FFFFFF; }"
         "QScrollArea > QWidget > QWidget { background: #FFFFFF; }"
         "#bindingEditor, #settings_group, QGroupBox {"
-        " background: #FFFFFF; border: 0.5px solid #D3D1C7;"
+        " background: #FFFFFF; color: #2C2C2A;"
+        " border: 0.5px solid #D3D1C7;"
         " border-radius: 8px; margin-top: 6px; }"
         "#bindingCard { background: #FFFFFF;"
         " border: 0.5px solid #D3D1C7; border-radius: 8px; }"
@@ -99,13 +102,16 @@ _THEME_QSS = {
         " border-radius: 8px; }"
     ),
     "dark": (
+        "QMainWindow { background: #1E1E1E; }"
+        "QLabel { color: #E0E0E0; background: transparent; }"
         "#statusLabel, #dirtyLabel { font-weight: 500; }"
         "#bindingList { background: #1E1E1E; border: none; }"
         "#bindingList::item { border: none; background: #1E1E1E; }"
         "QScrollArea { border: none; background: #1E1E1E; }"
         "QScrollArea > QWidget > QWidget { background: #1E1E1E; }"
         "#bindingEditor, #settings_group, QGroupBox {"
-        " background: #1E1E1E; border: 0.5px solid #3C3C3C;"
+        " background: #1E1E1E; color: #E0E0E0;"
+        " border: 0.5px solid #3C3C3C;"
         " border-radius: 8px; margin-top: 6px; }"
         "#bindingCard { background: #2B2B2B;"
         " border: 0.5px solid #3C3C3C; border-radius: 8px; }"
@@ -465,10 +471,10 @@ class MainWindow(QMainWindow):
             settings
         )
         self.settings_layout.setContentsMargins(
-            12,
-            12,
-            12,
-            12,
+            6,
+            10,
+            10,
+            10,
         )
         self.settings_layout.setSpacing(
             16
