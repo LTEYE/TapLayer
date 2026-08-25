@@ -64,7 +64,11 @@ _PROFILE_NAME_KEYS = {
 _THEME_QSS = {
     "light": (
         "QMainWindow { background: #F0F0F0; }"
+        "QDialog, QMessageBox, QInputDialog { background: #FFFFFF; }"
         "QLabel { color: #2C2C2A; background: transparent; }"
+        "#toastLabel { background: rgba(44, 44, 42, 0.92);"
+        " color: #FFFFFF; border-radius: 8px;"
+        " padding: 10px 18px; font-size: 13px; }"
         "#statusLabel, #dirtyLabel { font-weight: 500; }"
         "#bindingList { background: #FFFFFF; border: none; }"
         "#bindingList::item { border: none; background: #FFFFFF; }"
@@ -120,7 +124,11 @@ _THEME_QSS = {
     ),
     "dark": (
         "QMainWindow { background: #1E1E1E; }"
+        "QDialog, QMessageBox, QInputDialog { background: #1E1E1E; }"
         "QLabel { color: #E0E0E0; background: transparent; }"
+        "#toastLabel { background: rgba(224, 224, 224, 0.92);"
+        " color: #1E1E1E; border-radius: 8px;"
+        " padding: 10px 18px; font-size: 13px; }"
         "#statusLabel, #dirtyLabel { font-weight: 500; }"
         "#bindingList { background: #1E1E1E; border: none; }"
         "#bindingList::item { border: none; background: #1E1E1E; }"
@@ -266,6 +274,9 @@ class MainWindow(QMainWindow):
 
         # 当前生效主题（light/dark），由 _apply_theme 维护
         self._theme_resolved = "light"
+
+        # toast 提示窗口引用（防止局部变量被 GC 回收导致一闪即逝）
+        self._toast = None
 
         # 设置即时生效的防抖定时器（spin 连续变化时合并写入）
         self._settings_timer = QTimer(
@@ -867,6 +878,179 @@ class MainWindow(QMainWindow):
             "#5F5E5A",
         )
 
+    def _show_toast(
+        self,
+        text: str,
+    ) -> None:
+        if not text:
+            return
+
+        if self._toast is not None:
+            self._toast.close()
+            self._toast.deleteLater()
+            self._toast = None
+
+        toast = QLabel(
+            text
+        )
+        toast.setObjectName(
+            "toastLabel"
+        )
+        toast.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        toast.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.Tool
+        )
+        toast.setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground,
+            True,
+        )
+        toast.adjustSize()
+
+        screen = (
+            QApplication.primaryScreen()
+        )
+
+        if screen is not None:
+            geometry = (
+                screen.availableGeometry()
+            )
+            toast.move(
+                geometry.center().x()
+                - toast.width() // 2,
+                geometry.top() + 48,
+            )
+
+        self._toast = toast
+
+        toast.show()
+        toast.raise_()
+
+        QTimer.singleShot(
+            1800,
+            toast.close,
+        )
+
+    def _show_settings_toast(
+        self,
+        old_settings,
+        new_settings,
+    ) -> None:
+        messages = []
+
+        if (
+            old_settings.start_with_windows
+            != new_settings.start_with_windows
+        ):
+            messages.append(
+                self.i18n.tr(
+                    "toast.startup"
+                    + (
+                        ".on"
+                        if new_settings.start_with_windows
+                        else ".off"
+                    )
+                )
+            )
+
+        if (
+            old_settings.enable_gesture_overlay
+            != new_settings.enable_gesture_overlay
+        ):
+            messages.append(
+                self.i18n.tr(
+                    "toast.overlay"
+                    + (
+                        ".on"
+                        if new_settings.enable_gesture_overlay
+                        else ".off"
+                    )
+                )
+            )
+
+        if (
+            old_settings.theme
+            != new_settings.theme
+        ):
+            theme_names = {
+                "system": self.i18n.tr(
+                    "theme.system"
+                ),
+                "dark": self.i18n.tr(
+                    "theme.dark"
+                ),
+                "light": self.i18n.tr(
+                    "theme.light"
+                ),
+            }
+            messages.append(
+                self.i18n.tr(
+                    "toast.theme",
+                    name=theme_names.get(
+                        new_settings.theme,
+                        new_settings.theme,
+                    ),
+                )
+            )
+
+        if (
+            old_settings.language
+            != new_settings.language
+        ):
+            language_names = {
+                "system": self.i18n.tr(
+                    "language.system"
+                ),
+                "zh_CN": self.i18n.tr(
+                    "language.zh_CN"
+                ),
+                "en_US": self.i18n.tr(
+                    "language.en_US"
+                ),
+            }
+            messages.append(
+                self.i18n.tr(
+                    "toast.language",
+                    name=language_names.get(
+                        new_settings.language,
+                        new_settings.language,
+                    ),
+                )
+            )
+
+        if (
+            old_settings.double_tap_interval_ms
+            != new_settings.double_tap_interval_ms
+        ):
+            messages.append(
+                self.i18n.tr(
+                    "toast.interval",
+                    value=(
+                        new_settings.double_tap_interval_ms
+                    ),
+                )
+            )
+
+        if (
+            old_settings.hold_threshold_ms
+            != new_settings.hold_threshold_ms
+        ):
+            messages.append(
+                self.i18n.tr(
+                    "toast.hold",
+                    value=(
+                        new_settings.hold_threshold_ms
+                    ),
+                )
+            )
+
+        self._show_toast(
+            " · ".join(messages)
+        )
+
     def refresh_status(
         self,
     ) -> None:
@@ -1094,6 +1278,9 @@ class MainWindow(QMainWindow):
     def _add_profile(
         self,
     ) -> None:
+        if not self._confirm_unsaved():
+            return
+
         from PySide6.QtWidgets import (
             QDialogButtonBox,
             QInputDialog,
@@ -1433,6 +1620,15 @@ class MainWindow(QMainWindow):
         enabled_check.setChecked(
             binding["enabled"]
         )
+        enabled_check.setText(
+            self.i18n.tr(
+                "binding.enabled"
+            )
+            if binding["enabled"]
+            else self.i18n.tr(
+                "gesture.off"
+            )
+        )
         enabled_check.setToolTip(
             self.i18n.tr(
                 "binding.enabled"
@@ -1490,6 +1686,16 @@ class MainWindow(QMainWindow):
     ) -> None:
         binding["enabled"] = (
             check.isChecked()
+        )
+
+        check.setText(
+            self.i18n.tr(
+                "binding.enabled"
+            )
+            if check.isChecked()
+            else self.i18n.tr(
+                "gesture.off"
+            )
         )
 
         self._mark_editor_changed()
@@ -1566,6 +1772,27 @@ class MainWindow(QMainWindow):
         if row < 0:
             self._clear_editor()
             self._show_editor_hint()
+            return
+
+        if (
+            row
+            == self._current_binding_index
+        ):
+            return
+
+        if not self._confirm_unsaved():
+            self.bindingList.blockSignals(
+                True
+            )
+            self.bindingList.setCurrentRow(
+                self._current_binding_index
+                if self._current_binding_index
+                is not None
+                else 0
+            )
+            self.bindingList.blockSignals(
+                False
+            )
             return
 
         self._sync_current_binding()
@@ -2318,6 +2545,55 @@ class MainWindow(QMainWindow):
             )
             self._dirty_label.hide()
 
+    def _confirm_unsaved(
+        self,
+    ) -> bool:
+        if not (
+            self._editor_dirty
+            or self._is_dirty()
+        ):
+            return True
+
+        box = QMessageBox(
+            self
+        )
+        box.setWindowTitle(
+            self.i18n.tr(
+                "unsaved.title"
+            )
+        )
+        box.setText(
+            self.i18n.tr(
+                "unsaved.message"
+            )
+        )
+        box.setIcon(
+            QMessageBox.Icon.Question
+        )
+
+        continue_button = box.addButton(
+            self.i18n.tr(
+                "unsaved.continue"
+            ),
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        cancel_button = box.addButton(
+            self.i18n.tr(
+                "recorder.cancel"
+            ),
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        box.setDefaultButton(
+            cancel_button
+        )
+
+        box.exec()
+
+        return (
+            box.clickedButton()
+            == continue_button
+        )
+
     def _settings_changed(
         self,
         *_args,
@@ -2364,6 +2640,18 @@ class MainWindow(QMainWindow):
                 "settings commit failed"
             )
             return
+
+        old_settings = (
+            self._config.settings
+        )
+        new_settings = (
+            new_config.settings
+        )
+
+        self._show_settings_toast(
+            old_settings,
+            new_settings,
+        )
 
         self._config = new_config
         self._saved = copy.deepcopy(
@@ -2512,6 +2800,9 @@ class MainWindow(QMainWindow):
     def _add_binding(
         self,
     ) -> None:
+        if not self._confirm_unsaved():
+            return
+
         self._sync_controls_to_working()
 
         profile = self._working_profile()
@@ -2543,6 +2834,9 @@ class MainWindow(QMainWindow):
     def _delete_binding(
         self,
     ) -> None:
+        if not self._confirm_unsaved():
+            return
+
         self._sync_controls_to_working()
 
         if (
