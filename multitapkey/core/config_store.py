@@ -31,7 +31,7 @@ def config_dir() -> Path:
 
     path = Path(
         appdata
-    ) / "MultiTapKey"
+    ) / "TapLayer"
 
     path.mkdir(
         parents=True,

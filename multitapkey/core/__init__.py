@@ -1,1 +1,1 @@
-"""Platform-independent MultiTapKey core."""
+"""Platform-independent TapLayer core."""

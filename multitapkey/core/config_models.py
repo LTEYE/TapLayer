@@ -730,40 +730,134 @@ def _disabled_action() -> ActionSpec:
     )
 
 
-def _default_binding() -> Binding:
-    return Binding(
-        trigger=(),
-        enabled=True,
-        gestures=GestureSpec(
-            taps=(
-                (1, _chord_action("F23")),
-                (2, _chord_action("F24")),
-                (3, _chord_action("F22")),
-                (4, _chord_action("F21")),
-            ),
-            hold=_chord_action("F21"),
+def _default_binding(
+    trigger: tuple[str, ...],
+    tap2: tuple[str, ...] | None = None,
+    hold: tuple[str, ...] | None = None,
+) -> Binding:
+    """默认绑定：低频键触发，单击停用（无动作），双击/长按映射输出。
+
+    触发键必须是低频键（ScrollLock/Pause/Insert 等）——触发键按下
+    会被程序接管（等待单击/双击/长按判定），不能透传给系统，因此
+    Ctrl/Alt/Shift 这类高频键当触发键会导致其组合键全部失效。
+    """
+    taps: list[tuple[int, ActionSpec]] = [
+        (
+            1,
+            _disabled_action(),
         ),
+    ]
+
+    if tap2 is not None:
+        taps.append(
+            (
+                2,
+                _chord_action(
+                    *tap2
+                ),
+            )
+        )
+
+    gestures = GestureSpec(
+        taps=tuple(taps),
+        hold=(
+            _chord_action(
+                *hold
+            )
+            if hold is not None
+            else _disabled_action()
+        ),
+    )
+
+    return Binding(
+        trigger=canonicalize_keys(
+            trigger
+        ),
+        enabled=True,
+        gestures=gestures,
     )
 
 
 def default_config() -> Config:
-    binding = _default_binding()
-
+    # 出厂默认：三档实用配置（低频键触发，零干扰）。
     return Config(
         version=CONFIG_VERSION,
         settings=Settings(),
         profiles=(
             Profile(
                 name="default",
-                bindings=(binding,),
+                bindings=(
+                    # 日常：复制粘贴
+                    _default_binding(
+                        ("ScrollLock",),
+                        tap2=(
+                            "Ctrl",
+                            "C",
+                        ),
+                        hold=(
+                            "Ctrl",
+                            "V",
+                        ),
+                    ),
+                    # 日常：撤销重做
+                    _default_binding(
+                        ("Insert",),
+                        tap2=(
+                            "Ctrl",
+                            "Z",
+                        ),
+                        hold=(
+                            "Ctrl",
+                            "Y",
+                        ),
+                    ),
+                ),
             ),
             Profile(
                 name="Gaming",
-                bindings=(binding,),
+                bindings=(
+                    # 游戏：背包 / 地图
+                    _default_binding(
+                        ("ScrollLock",),
+                        tap2=("B",),
+                        hold=("M",),
+                    ),
+                    # 游戏：换弹 / 交互
+                    _default_binding(
+                        ("Pause",),
+                        tap2=("R",),
+                        hold=("F",),
+                    ),
+                ),
             ),
             Profile(
                 name="Work",
-                bindings=(binding,),
+                bindings=(
+                    # 工作：保存 / 关闭
+                    _default_binding(
+                        ("Pause",),
+                        tap2=(
+                            "Ctrl",
+                            "S",
+                        ),
+                        hold=(
+                            "Ctrl",
+                            "W",
+                        ),
+                    ),
+                    # 工作：查找 / 继续查找
+                    _default_binding(
+                        ("Insert",),
+                        tap2=(
+                            "Ctrl",
+                            "F",
+                        ),
+                        hold=(
+                            "Ctrl",
+                            "G",
+                        ),
+                    ),
+                ),
             ),
         ),
     )
