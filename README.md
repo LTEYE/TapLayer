@@ -6,6 +6,8 @@
 
 **One key, many shortcuts.** TapLayer turns a single physical key into up to **10 layers** — single tap, double tap, triple tap … up to 9 taps, and long press — and each layer triggers its own shortcut. A mouse side button, an F24 remap, or even a chord like `A+S` can become a whole shortcut panel.
 
+![TapLayer main window — binding editor showing two mouse side-button bindings](assets/screenshots/screenshot-main-en.png)
+
 **Try it in 5 seconds:** the out-of-box config ships with three practical profiles — "Daily" (ScrollLock double-tap = copy, long-press = paste), "Gaming" (ScrollLock double-tap = inventory, long-press = map) and "Work" (Pause double-tap = save, long-press = close). Launch the app and feel it yourself.
 
 ```text
