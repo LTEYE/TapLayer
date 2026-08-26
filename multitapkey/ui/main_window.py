@@ -6,6 +6,7 @@ import copy
 import logging
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -43,6 +44,7 @@ from multitapkey.core.config_models import (
     validate_and_build,
 )
 from multitapkey.core.config_store import (
+    config_dir,
     export_config as export_config_file,
     import_config as import_config_file,
     save_config,
@@ -67,9 +69,11 @@ _THEME_QSS = {
         "QMainWindow { background: #F0F0F0; }"
         "QDialog, QMessageBox, QInputDialog { background: #FFFFFF; }"
         "QLabel { color: #2C2C2A; background: transparent; }"
-        "#toastLabel { background: rgba(44, 44, 42, 0.92);"
-        " color: #FFFFFF; border-radius: 8px;"
-        " padding: 10px 18px; font-size: 13px; }"
+        "#toastLabel { background: #2C2C2A;"
+        " color: #FFFFFF; border: 1px solid #1A1A18;"
+        " border-radius: 8px;"
+        " padding: 10px 18px; font-size: 14px;"
+        " font-weight: 500; }"
         "#statusLabel, #dirtyLabel { font-weight: 500; }"
         "#bindingList { background: #FFFFFF; border: none; }"
         "#bindingList::item { border: none; background: #FFFFFF; }"
@@ -93,8 +97,11 @@ _THEME_QSS = {
         "#gestureName { font-size: 13px; font-weight: 500;"
         " color: #2C2C2A; background: transparent; }"
         "#gestureValue { font-size: 14px; font-weight: 500;"
-        " color: #2C2C2A; background: transparent; }"
+        " color: #2C2C2A; background: #E0DED6;"
+        " border-radius: 6px; padding: 2px 10px; }"
         "#gestureParam { font-size: 12px; color: #5F5E5A;"
+        " background: transparent; }"
+        "#antiPiracy { color: #A32D2D; font-size: 12px;"
         " background: transparent; }"
         "QComboBox { background: #FFFFFF;"
         " color: #2C2C2A; border: 0.5px solid #D3D1C7;"
@@ -103,6 +110,8 @@ _THEME_QSS = {
         " color: #2C2C2A; selection-background-color: #E6F1FB; }"
         "QSpinBox { background: #FFFFFF; color: #2C2C2A;"
         " border: 0.5px solid #D3D1C7; }"
+        "QSpinBox:disabled { background: #F1EFE8; color: #B4B2A9;"
+        " border: 0.5px solid #E0DED6; }"
         "QCheckBox { color: #2C2C2A; background: transparent;"
         " border: none; }"
         "QCheckBox::indicator { width: 16px; height: 16px;"
@@ -131,9 +140,11 @@ _THEME_QSS = {
         "QMainWindow { background: #1E1E1E; }"
         "QDialog, QMessageBox, QInputDialog { background: #1E1E1E; }"
         "QLabel { color: #E0E0E0; background: transparent; }"
-        "#toastLabel { background: rgba(224, 224, 224, 0.92);"
-        " color: #1E1E1E; border-radius: 8px;"
-        " padding: 10px 18px; font-size: 13px; }"
+        "#toastLabel { background: #E0E0E0;"
+        " color: #1E1E1E; border: 1px solid #FFFFFF;"
+        " border-radius: 8px;"
+        " padding: 10px 18px; font-size: 14px;"
+        " font-weight: 500; }"
         "#statusLabel, #dirtyLabel { font-weight: 500; }"
         "#bindingList { background: #1E1E1E; border: none; }"
         "#bindingList::item { border: none; background: #1E1E1E; }"
@@ -157,8 +168,11 @@ _THEME_QSS = {
         "#gestureName { font-size: 13px; font-weight: 500;"
         " color: #B4B2A9; background: transparent; }"
         "#gestureValue { font-size: 14px; font-weight: 500;"
-        " color: #E0E0E0; background: transparent; }"
+        " color: #E0E0E0; background: #3C3C3C;"
+        " border-radius: 6px; padding: 2px 10px; }"
         "#gestureParam { font-size: 12px; color: #9AA0A6;"
+        " background: transparent; }"
+        "#antiPiracy { color: #FF8A80; font-size: 12px;"
         " background: transparent; }"
         "QComboBox { background: #2B2B2B;"
         " color: #E0E0E0; border: 0.5px solid #3C3C3C;"
@@ -167,6 +181,8 @@ _THEME_QSS = {
         " color: #E0E0E0; selection-background-color: #1F3B57; }"
         "QSpinBox { background: #2B2B2B; color: #E0E0E0;"
         " border: 0.5px solid #3C3C3C; }"
+        "QSpinBox:disabled { background: #232323; color: #6A6A6A;"
+        " border: 0.5px solid #333333; }"
         "QCheckBox { color: #E0E0E0; background: transparent;"
         " border: none; }"
         "QCheckBox::indicator { width: 16px; height: 16px;"
@@ -312,6 +328,9 @@ class MainWindow(QMainWindow):
             self._config.settings.enable_gesture_overlay
         )
 
+        # 首次启动引导（触发键机制说明 + 高亮引导设置）
+        self._show_onboarding_if_needed()
+
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
@@ -384,6 +403,15 @@ class MainWindow(QMainWindow):
         self.profileCombo = QComboBox()
         self.profileCombo.setObjectName(
             "profileCombo"
+        )
+        self.profileCombo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.profileCombo.setMinimumContentsLength(
+            6
+        )
+        self.profileCombo.setMinimumWidth(
+            120
         )
 
         self.profileCombo.currentIndexChanged.connect(
@@ -617,6 +645,10 @@ class MainWindow(QMainWindow):
             (
                 "button.help",
                 self._show_help,
+            ),
+            (
+                "button.support",
+                self._show_support_dialog,
             ),
         ):
             button = QPushButton(
@@ -876,6 +908,62 @@ class MainWindow(QMainWindow):
         ):
             self._update_apply_highlight()
 
+        # 同步刷新窗口图标与托盘图标（v2 logo 跟随主题切换）
+        self._apply_logo_icons(
+            resolved
+        )
+
+    def _logo_path_for_theme(
+        self,
+        theme: str,
+    ) -> str | None:
+        """返回 v2 logo PNG 在当前主题下的绝对路径，资产缺失时返回 None。"""
+        from pathlib import Path
+        import sys
+
+        if getattr(
+            sys,
+            "frozen",
+            False,
+        ):
+            base = Path(
+                sys._MEIPASS
+            )
+        else:
+            base = Path(
+                __file__
+            ).resolve().parents[2]
+
+        suffix = "dark" if theme == "dark" else "light"
+        candidate = (
+            base
+            / "assets"
+            / "logo"
+            / f"taplayer-logo-v2-{suffix}-512.png"
+        )
+        if candidate.exists():
+            return str(candidate)
+        return None
+
+    def _apply_logo_icons(
+        self,
+        theme: str,
+    ) -> None:
+        """主题切换时同步刷新窗口图标与托盘图标。"""
+        icon_path = self._logo_path_for_theme(theme)
+        if icon_path is not None:
+            self.setWindowIcon(
+                QIcon(icon_path)
+            )
+        if (
+            self._tray is not None
+            and hasattr(
+                self._tray,
+                "set_theme",
+            )
+        ):
+            self._tray.set_theme(theme)
+
     def _theme_color(
         self,
         kind: str,
@@ -894,54 +982,250 @@ class MainWindow(QMainWindow):
         if not text:
             return
 
-        if self._toast is not None:
-            self._toast.close()
-            self._toast.deleteLater()
-            self._toast = None
+        # 反馈提示用主窗口内部悬浮层（不用独立顶层窗口）：
+        # 顶层 QLabel 窗口在真实桌面上存在不可见的问题（多屏/
+        # 合成/置顶时机），主窗口内控件渲染绝对可靠、必定可见。
+        parent = (
+            self.centralWidget()
+            or self
+        )
 
-        toast = QLabel(
+        if self._toast is None:
+            toast = QLabel(
+                parent
+            )
+            toast.setObjectName(
+                "toastLabel"
+            )
+            toast.setAlignment(
+                Qt.AlignmentFlag.AlignCenter
+            )
+            toast.setWordWrap(
+                True
+            )
+            toast.setAttribute(
+                Qt.WidgetAttribute.WA_TransparentForMouseEvents,
+                True,
+            )
+            toast.hide()
+            self._toast = toast
+        else:
+            toast = self._toast
+            toast.setParent(
+                parent
+            )
+
+        toast.setText(
             text
-        )
-        toast.setObjectName(
-            "toastLabel"
-        )
-        toast.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
-        toast.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
-        )
-        toast.setAttribute(
-            Qt.WidgetAttribute.WA_TranslucentBackground,
-            True,
         )
         toast.adjustSize()
 
-        screen = (
-            QApplication.primaryScreen()
+        # 定位在主窗口中央上方（跟随窗口移动/缩放）
+        parent_w = parent.width()
+        toast.move(
+            max(
+                (parent_w - toast.width()) // 2,
+                8,
+            ),
+            24,
         )
-
-        if screen is not None:
-            geometry = (
-                screen.availableGeometry()
-            )
-            toast.move(
-                geometry.center().x()
-                - toast.width() // 2,
-                geometry.top() + 48,
-            )
-
-        self._toast = toast
 
         toast.show()
         toast.raise_()
 
-        QTimer.singleShot(
-            1800,
-            toast.close,
+        # 取消旧的隐藏定时器，重新计时
+        timer = getattr(
+            self,
+            "_toast_timer",
+            None,
         )
+
+        if timer is not None:
+            timer.stop()
+        else:
+            timer = QTimer(
+                self
+            )
+            timer.setSingleShot(
+                True
+            )
+            timer.timeout.connect(
+                self._toast.hide
+            )
+            self._toast_timer = timer
+
+        timer.start(
+            2500
+        )
+
+    # ------------------------------------------------------------------
+    # First-run onboarding（首次启动引导）
+    # ------------------------------------------------------------------
+
+    def _show_onboarding_if_needed(self) -> None:
+        """首次启动时弹引导：说明触发键机制 + 推荐玩法 + 高亮触发键。"""
+        try:
+            flag = (
+                config_dir()
+                / "onboarded.flag"
+            )
+        except Exception:
+            return
+
+        if flag.exists():
+            return
+
+        try:
+            flag.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+            flag.write_text(
+                "1",
+                encoding="utf-8",
+            )
+        except Exception:
+            log.exception(
+                "onboarding flag write failed"
+            )
+
+        self._show_onboarding()
+
+    def _show_onboarding(self) -> None:
+        from PySide6.QtWidgets import (
+            QDialog,
+            QHBoxLayout,
+            QPushButton,
+            QTextBrowser,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(
+            self
+        )
+        dialog.setWindowTitle(
+            self.i18n.tr(
+                "onboarding.title"
+            )
+        )
+        dialog.setMinimumWidth(
+            560
+        )
+
+        layout = QVBoxLayout(
+            dialog
+        )
+
+        body = QTextBrowser()
+        body.setOpenExternalLinks(
+            True
+        )
+        body.setHtml(
+            "<div style='line-height:1.7;'>"
+            + self.i18n.tr(
+                "onboarding.body"
+            )
+            + "</div>"
+        )
+        layout.addWidget(
+            body
+        )
+
+        row = QHBoxLayout()
+
+        later_button = QPushButton(
+            self.i18n.tr(
+                "onboarding.later"
+            )
+        )
+        later_button.clicked.connect(
+            dialog.accept
+        )
+        row.addWidget(
+            later_button
+        )
+
+        row.addStretch()
+
+        set_button = QPushButton(
+            self.i18n.tr(
+                "onboarding.set_now"
+            )
+        )
+        set_button.setDefault(
+            True
+        )
+        set_button.clicked.connect(
+            dialog.accept
+        )
+        set_button.clicked.connect(
+            self._onboarding_highlight_trigger
+        )
+        row.addWidget(
+            set_button
+        )
+
+        layout.addLayout(
+            row
+        )
+
+        dialog.exec()
+
+    def _onboarding_highlight_trigger(self) -> None:
+        """高亮触发键卡片并提示用户点「录制热键」。"""
+        self._highlight_trigger_card()
+
+        self._show_toast(
+            self.i18n.tr(
+                "onboarding.hint"
+            )
+        )
+
+    def _highlight_trigger_card(self) -> None:
+        card = getattr(
+            self,
+            "_trigger_card",
+            None,
+        )
+
+        if card is None:
+            return
+
+        self._flash_ticks = 0
+
+        timer = QTimer(
+            self
+        )
+        timer.setInterval(
+            400
+        )
+
+        def tick() -> None:
+            self._flash_ticks += 1
+
+            if self._flash_ticks > 6:
+                timer.stop()
+                card.setStyleSheet(
+                    ""
+                )
+                return
+
+            card.setStyleSheet(
+                (
+                    "QFrame#gestureCard {"
+                    " border: 2px solid #1a6cff;"
+                    " border-radius: 8px;"
+                    " background: #E6F1FB;"
+                    " }"
+                    if self._flash_ticks % 2 == 1
+                    else ""
+                )
+            )
+
+        timer.timeout.connect(
+            tick
+        )
+        timer.start()
 
     def _show_settings_toast(
         self,
@@ -1170,8 +1454,11 @@ class MainWindow(QMainWindow):
     def _working_profile(
         self,
     ) -> dict:
+        # 必须按 engine 当前真实档取档，不能按下拉框当前项：
+        # 切档瞬间下拉框已指向新档、但界面内容还是旧档，
+        # 若按下拉框取档会把旧档界面内容写进新档（数据污染）。
         profile_name = (
-            self.profileCombo.currentData()
+            self.engine.profile_name
             or "default"
         )
 
@@ -1509,6 +1796,15 @@ class MainWindow(QMainWindow):
         self._current_binding_index = None
         self._refresh_binding_list()
         self._load_settings()
+
+        self._show_toast(
+            self.i18n.tr(
+                "toast.profile",
+                name=self._profile_display_name(
+                    name
+                ),
+            )
+        )
 
     # ------------------------------------------------------------------
     # Binding list
@@ -1922,6 +2218,7 @@ class MainWindow(QMainWindow):
         trigger_card.setObjectName(
             "gestureCard"
         )
+        self._trigger_card = trigger_card
         trigger_row = QHBoxLayout(
             trigger_card
         )
@@ -2082,7 +2379,7 @@ class MainWindow(QMainWindow):
         head = QHBoxLayout()
 
         name_label = QLabel(
-            title
+            f"{title}:"
         )
         name_label.setObjectName(
             "gestureName"
@@ -2181,7 +2478,9 @@ class MainWindow(QMainWindow):
         else:
             param_label.setText(
                 self.i18n.tr(
-                    "binding.window_label"
+                    "binding.tap1_window"
+                    if key == "1"
+                    else "binding.window_label"
                 )
             )
             param_spin.setRange(
@@ -2196,19 +2495,26 @@ class MainWindow(QMainWindow):
             param_spin
         )
 
-        global_check = QCheckBox(
-            self.i18n.tr(
-                "binding.global"
+        # 1 击（单击判定）是独立的：没有"用默认值"概念，
+        # 它的数值始终由自己决定（初始值取全局默认作为起点）。
+        is_tap1 = key == "1"
+
+        global_check = None
+
+        if not is_tap1:
+            global_check = QCheckBox(
+                self.i18n.tr(
+                    "binding.global"
+                )
             )
-        )
-        global_check.setToolTip(
-            self.i18n.tr(
-                "binding.global_tip"
+            global_check.setToolTip(
+                self.i18n.tr(
+                    "binding.global_tip"
+                )
             )
-        )
-        param_row.addWidget(
-            global_check
-        )
+            param_row.addWidget(
+                global_check
+            )
 
         param_row.addStretch()
 
@@ -2231,9 +2537,6 @@ class MainWindow(QMainWindow):
             param_spin.setValue(
                 custom
             )
-            global_check.setChecked(
-                False
-            )
         else:
             settings = self._working[
                 "settings"
@@ -2248,25 +2551,43 @@ class MainWindow(QMainWindow):
             param_spin.setValue(
                 default_value
             )
+
+        if global_check is not None:
             global_check.setChecked(
-                True
+                custom is None
             )
 
-        param_spin.setEnabled(
-            not global_check.isChecked()
-        )
+            def _sync_global_lock(
+                checked,
+                s=param_spin,
+            ) -> None:
+                s.setEnabled(
+                    not checked
+                )
+                s.setToolTip(
+                    (
+                        self.i18n.tr(
+                            "binding.global_spin_tip"
+                        )
+                        if checked
+                        else ""
+                    )
+                )
 
-        global_check.toggled.connect(
-            lambda checked,
-            s=param_spin:
-            s.setEnabled(not checked)
-        )
-        global_check.toggled.connect(
-            self._mark_editor_changed
-        )
-        global_check.toggled.connect(
-            self._update_monotonic_warnings
-        )
+            _sync_global_lock(
+                global_check.isChecked()
+            )
+
+            global_check.toggled.connect(
+                _sync_global_lock
+            )
+            global_check.toggled.connect(
+                self._mark_editor_changed
+            )
+            global_check.toggled.connect(
+                self._update_monotonic_warnings
+            )
+
         param_spin.valueChanged.connect(
             self._mark_editor_changed
         )
@@ -2369,8 +2690,11 @@ class MainWindow(QMainWindow):
         for key, widgets in (
             self._gesture_widgets.items()
         ):
-            # 仅"使用全局"模式下手势卡片数值跟随全局设置变化
-            if not widgets["global"].isChecked():
+            g = widgets.get("global")
+
+            # 仅"使用全局"模式下手势卡片数值跟随全局设置变化；
+            # 1 击（单击判定）无全局选项，始终用自身数值。
+            if g is None or not g.isChecked():
                 continue
 
             value = (
@@ -2406,9 +2730,6 @@ class MainWindow(QMainWindow):
         warning = self.i18n.tr(
             "warning.monotonic"
         )
-        label_key = self.i18n.tr(
-            "binding.window_label"
-        )
 
         prev_effective: int | None = None
 
@@ -2420,6 +2741,12 @@ class MainWindow(QMainWindow):
                 widgets["spin"].value()
             )
             param = widgets["param"]
+
+            label_key = self.i18n.tr(
+                "binding.tap1_window"
+                if key == "1"
+                else "binding.window_label"
+            )
 
             if (
                 prev_effective is not None
@@ -2653,6 +2980,31 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # 鼠标左/右键作触发键会被完全接管（点击无法到达任何程序，
+        # 包括本软件自己）——确认时警告，并提示 Alt+Ctrl+F9 逃生。
+        if (
+            "MouseLeft" in canonical
+            or "MouseRight" in canonical
+        ):
+            choice = QMessageBox.warning(
+                self,
+                self.i18n.tr(
+                    "trigger.warn_mouse.title"
+                ),
+                self.i18n.tr(
+                    "trigger.warn_mouse.message"
+                ),
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+
+            if (
+                choice
+                != QMessageBox.StandardButton.Yes
+            ):
+                return
+
         self._trigger_chord = canonical
         self._update_trigger_button()
         self._mark_editor_changed()
@@ -2721,7 +3073,9 @@ class MainWindow(QMainWindow):
         self,
         *_args,
     ) -> None:
-        self._editor_dirty = True
+        # 先把界面状态同步到工作副本，再与后端配置真实对比：
+        # 只有真正存在差异才显示"未保存"（改回去/取消操作不应误报）。
+        self._sync_controls_to_working()
         self._update_apply_highlight()
 
     def _update_apply_highlight(
@@ -2737,8 +3091,7 @@ class MainWindow(QMainWindow):
             return
 
         dirty = (
-            self._editor_dirty
-            or self._is_dirty()
+            self._is_dirty()
         )
 
         if dirty:
@@ -2954,17 +3307,49 @@ class MainWindow(QMainWindow):
                     if not widgets[
                         "global"
                     ].isChecked():
-                        action["hold_ms"] = (
+                        hold_val = (
                             widgets[
                                 "spin"
                             ].value()
                         )
-                elif not widgets[
-                    "global"
-                ].isChecked():
-                    action["interval_ms"] = (
+
+                        # 数值等于全局默认时不落 hold_ms，
+                        # 避免"取消用默认值但没改数值"被误判为未保存修改。
+                        if (
+                            hold_val
+                            != self._working[
+                                "settings"
+                            ][
+                                "hold_threshold_ms"
+                            ]
+                        ):
+                            action["hold_ms"] = (
+                                hold_val
+                            )
+                elif (
+                    widgets["global"] is None
+                    or not widgets[
+                        "global"
+                    ].isChecked()
+                ):
+                    spin_val = (
                         widgets["spin"].value()
                     )
+
+                    # 数值等于全局默认时不落 interval_ms：
+                    # ① 1 击（单击判定）始终由自己决定；
+                    # ② 取消"用默认值"但数值没改 → 不算改动。
+                    if (
+                        spin_val
+                        != self._working[
+                            "settings"
+                        ][
+                            "double_tap_interval_ms"
+                        ]
+                    ):
+                        action["interval_ms"] = (
+                            spin_val
+                        )
 
             if key == "hold":
                 gestures["hold"] = action
@@ -3143,6 +3528,11 @@ class MainWindow(QMainWindow):
             self.bindingList.setCurrentRow(
                 target
             )
+
+        # 删除后立即刷新保存按钮状态：绑定已从工作副本移除，
+        # 必须高亮「保存配置」并允许点击，否则切档会被"未保存"
+        # 拦截且无法保存 → 死锁。
+        self._mark_editor_changed()
 
     # ------------------------------------------------------------------
     # Settings
@@ -3399,6 +3789,30 @@ class MainWindow(QMainWindow):
         tray,
     ) -> None:
         self._tray = tray
+        # 同步当前主题到托盘图标，避免首帧仍是系统默认图标
+        if hasattr(
+            self,
+            "_theme_resolved",
+        ):
+            tray.set_theme(
+                self._theme_resolved
+            )
+
+    def toggle_pause(self) -> None:
+        """全局热键 Alt+Ctrl+F9 触发：暂停/恢复切换。
+
+        紧急逃生口——万一触发键是鼠标左键把点击全接管了，
+        用户还能靠这个快捷键立刻恢复鼠标。
+        """
+        tray = self._tray
+
+        if tray is None:
+            return
+
+        if self.engine.paused:
+            tray._resume()
+        else:
+            tray._pause()
 
     def _show_help(
         self,
@@ -3406,6 +3820,247 @@ class MainWindow(QMainWindow):
         dialog = HelpDialog(
             self.i18n,
             self,
+        )
+
+        dialog.exec()
+
+    @staticmethod
+    def _resource_path(name: str) -> str:
+        import sys
+        from pathlib import Path
+
+        if getattr(
+            sys,
+            "frozen",
+            False,
+        ):
+            base = Path(
+                sys._MEIPASS
+            )
+        else:
+            base = Path(
+                __file__
+            ).resolve().parents[2]
+
+        return str(
+            base / name
+        )
+
+    def _show_support_dialog(
+        self,
+    ) -> None:
+        from pathlib import Path
+
+        from PySide6.QtWidgets import (
+            QDialog,
+            QHBoxLayout,
+            QLabel,
+            QPushButton,
+            QVBoxLayout,
+        )
+        from PySide6.QtGui import (
+            QPixmap,
+        )
+
+        dialog = QDialog(
+            self
+        )
+        dialog.setWindowTitle(
+            self.i18n.tr(
+                "support.title"
+            )
+        )
+        dialog.setObjectName(
+            "supportDialog"
+        )
+        dialog.setFixedWidth(
+            420
+        )
+
+        layout = QVBoxLayout(
+            dialog
+        )
+        layout.setSpacing(
+            10
+        )
+        layout.setContentsMargins(
+            20,
+            20,
+            20,
+            20,
+        )
+
+        # 顶部 logo（v2 标志图，96px，随主题切换深/浅版）
+        logo_path = self._logo_path_for_theme(
+            self._theme_resolved
+        )
+        if logo_path is not None:
+            logo_pixmap = QPixmap(
+                logo_path
+            ).scaled(
+                96,
+                96,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            logo_label = QLabel()
+            logo_label.setPixmap(
+                logo_pixmap
+            )
+            logo_label.setAlignment(
+                Qt.AlignmentFlag.AlignCenter
+            )
+            layout.addWidget(
+                logo_label
+            )
+
+        version_label = QLabel(
+            self.i18n.tr(
+                "support.version"
+            )
+        )
+        version_label.setObjectName(
+            "editorTitle"
+        )
+        version_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            version_label
+        )
+
+        copyright_label = QLabel(
+            "Copyright (C) 2026 XKDMW"
+        )
+        copyright_label.setObjectName(
+            "gestureParam"
+        )
+        copyright_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            copyright_label
+        )
+
+        email_label = QLabel(
+            '<a href="mailto:XKDMW404@gmail.com" '
+            'style="color:#1a6cff;text-decoration:none;">'
+            "XKDMW404@gmail.com</a>"
+        )
+        email_label.setObjectName(
+            "gestureParam"
+        )
+        email_label.setOpenExternalLinks(
+            True
+        )
+        email_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            email_label
+        )
+
+        anti_piracy = QLabel(
+            self.i18n.tr(
+                "support.anti_piracy"
+            )
+        )
+        anti_piracy.setObjectName(
+            "antiPiracy"
+        )
+        anti_piracy.setWordWrap(
+            True
+        )
+        anti_piracy.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            anti_piracy
+        )
+
+        intro = QLabel(
+            self.i18n.tr(
+                "support.text"
+            )
+        )
+        intro.setWordWrap(
+            True
+        )
+        intro.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            intro
+        )
+
+        qr_path = (
+            self._resource_path(
+                "assets/support_qr.jpg"
+            )
+        )
+
+        if Path(
+            qr_path
+        ).exists():
+            pixmap = QPixmap(
+                qr_path
+            )
+
+            if not pixmap.isNull():
+                pixmap = pixmap.scaled(
+                    280,
+                    280,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+
+                qr_label = QLabel()
+                qr_label.setPixmap(
+                    pixmap
+                )
+                qr_label.setAlignment(
+                    Qt.AlignmentFlag.AlignCenter
+                )
+                layout.addWidget(
+                    qr_label
+                )
+
+        kofi = QLabel(
+            '<a href="https://ko-fi.com/xkdmw" '
+            'style="color:#1a6cff;text-decoration:none;">'
+            f"{self.i18n.tr('support.kofi')}</a>"
+        )
+        kofi.setObjectName(
+            "gestureParam"
+        )
+        kofi.setOpenExternalLinks(
+            True
+        )
+        kofi.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
+        layout.addWidget(
+            kofi
+        )
+
+        close_row = QHBoxLayout()
+        close_row.addStretch()
+
+        close_button = QPushButton(
+            self.i18n.tr(
+                "support.close"
+            )
+        )
+        close_button.clicked.connect(
+            dialog.accept
+        )
+        close_row.addWidget(
+            close_button
+        )
+        close_row.addStretch()
+
+        layout.addLayout(
+            close_row
         )
 
         dialog.exec()
@@ -3813,6 +4468,15 @@ class MainWindow(QMainWindow):
     # Close handling
     # ------------------------------------------------------------------
 
+    def changeEvent(
+        self,
+        event,
+    ) -> None:
+        # 点最小化（-）→ 正常最小化到任务栏，不进托盘。
+        super().changeEvent(
+            event
+        )
+
     def closeEvent(
         self,
         event,
@@ -3873,7 +4537,7 @@ class MainWindow(QMainWindow):
             return
 
         if clicked == tray_button:
-            # 最小化到托盘：窗口隐藏，程序继续在后台运行。
+            # 点 × 选择隐藏到托盘：窗口隐藏，程序继续在后台运行。
             event.ignore()
             self.hide()
             return

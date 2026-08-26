@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
@@ -21,6 +24,25 @@ from multitapkey.core.config_store import (
 from multitapkey.i18n.manager import I18nManager
 
 
+def _logo_icon_path(theme: str) -> str | None:
+    """Return absolute path to the v2 logo PNG for the given theme,
+    or None if the asset is missing (caller should fall back)."""
+    suffix = "dark" if theme == "dark" else "light"
+    if getattr(sys, "frozen", False):
+        base = Path(sys._MEIPASS)
+    else:
+        base = Path(__file__).resolve().parents[2]
+    candidate = (
+        base
+        / "assets"
+        / "logo"
+        / f"taplayer-logo-v2-{suffix}-512.png"
+    )
+    if candidate.exists():
+        return str(candidate)
+    return None
+
+
 class TrayController(QObject):
     def __init__(
         self,
@@ -35,25 +57,51 @@ class TrayController(QObject):
         self.window = window
         self.i18n = i18n
 
+        # 当前主题（light/dark），由 window._apply_theme 同步
+        self._theme = "light"
+
         self.tray = QSystemTrayIcon(
             self
         )
 
-        icon = QApplication.style().standardIcon(
-            QStyle.StandardPixmap.SP_ComputerIcon
-        )
-
-        self.tray.setIcon(
-            QIcon(icon)
-        )
+        self._apply_icon()
 
         self.tray.activated.connect(
             self._activated
         )
 
+        self.tray.setToolTip(
+            self.i18n.tr(
+                "tray.tooltip"
+            )
+        )
+
         self.refresh()
 
         self.tray.show()
+
+    def _apply_icon(self) -> None:
+        """根据当前主题设置托盘图标，找不到资产时兜底用系统默认图标。"""
+        path = _logo_icon_path(self._theme)
+        if path is not None:
+            self.tray.setIcon(QIcon(path))
+        else:
+            self.tray.setIcon(
+                QIcon(
+                    QApplication.style().standardIcon(
+                        QStyle.StandardPixmap.SP_ComputerIcon
+                    )
+                )
+            )
+
+    def set_theme(self, theme: str) -> None:
+        """window._apply_theme 时调用，同步托盘图标主题。"""
+        if theme not in ("light", "dark"):
+            return
+        if theme == self._theme:
+            return
+        self._theme = theme
+        self._apply_icon()
 
     def refresh(self) -> None:
         menu = QMenu()
@@ -139,6 +187,19 @@ class TrayController(QObject):
             export_action
         )
 
+        support_action = QAction(
+            self.i18n.tr(
+                "tray.support"
+            ),
+            menu,
+        )
+        support_action.triggered.connect(
+            self.window._show_support_dialog
+        )
+        menu.addAction(
+            support_action
+        )
+
         menu.addSeparator()
 
         exit_action = QAction(
@@ -164,10 +225,36 @@ class TrayController(QObject):
         self.window.refresh_status()
         self.refresh()
 
+        # 暂停/恢复用系统托盘气泡通知（程序暂停时主窗口可能
+        # 已隐藏，顶部弹窗不可见，通知栏最合理）。
+        self._balloon(
+            "toast.pause"
+        )
+
     def _resume(self) -> None:
         self.engine.resume()
         self.window.refresh_status()
         self.refresh()
+
+        self._balloon(
+            "toast.resume"
+        )
+
+    def _balloon(self, text_key: str) -> None:
+        """系统托盘气泡（仅暂停/恢复使用）。失败不影响功能。"""
+        try:
+            self.tray.showMessage(
+                self.i18n.tr(
+                    "tray.tooltip"
+                ),
+                self.i18n.tr(
+                    text_key
+                ),
+                QSystemTrayIcon.MessageIcon.Information,
+                2500,
+            )
+        except Exception:
+            pass
 
     def _reload(self) -> None:
         try:

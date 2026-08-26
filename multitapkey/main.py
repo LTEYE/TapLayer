@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.wintypes as wt
+import logging
 import os
 import sys
 
-from PySide6.QtCore import QLockFile, QTimer
+from PySide6.QtCore import (
+    QAbstractNativeEventFilter,
+    QLockFile,
+    QTimer,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QMessageBox,
@@ -41,11 +48,62 @@ from multitapkey.ui.tray import (
     TrayController,
 )
 
+# 全局暂停热键：Alt+Ctrl+F9（紧急逃生口——万一触发键接管了
+# 鼠标左键导致无法点击，用它立刻暂停/恢复）
+HOTKEY_ID = 1
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+VK_F9 = 0x78
+WM_HOTKEY = 0x0312
+
+log = logging.getLogger(__name__)
+
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+user32.RegisterHotKey.restype = wt.BOOL
+user32.RegisterHotKey.argtypes = (
+    wt.HWND,
+    ctypes.c_int,
+    wt.UINT,
+    wt.UINT,
+)
+
+
+class _HotkeyFilter(QAbstractNativeEventFilter):
+    """监听 WM_HOTKEY，触发暂停/恢复切换。"""
+
+    def __init__(self, callback) -> None:
+        super().__init__()
+        self._callback = callback
+
+    def nativeEventFilter(self, event_type, message):
+        if event_type not in (
+            b"windows_generic_MSG",
+            "windows_generic_MSG",
+        ):
+            return False, 0
+
+        try:
+            msg = ctypes.cast(
+                int(message),
+                ctypes.POINTER(wt.MSG),
+            ).contents
+        except Exception:
+            return False, 0
+
+        if (
+            msg.message == WM_HOTKEY
+            and msg.wParam == HOTKEY_ID
+        ):
+            self._callback()
+            return True, 0
+
+        return False, 0
+
 
 def main() -> int:
     if sys.platform != "win32":
         print(
-            "MultiTapKey v0.1 "
+            "TapLayer v1.0.0 "
             "supports Windows 10/11 only."
         )
         return 1
@@ -62,8 +120,14 @@ def main() -> int:
         sys.argv
     )
 
+    # Fusion 风格：对自定义样式表支持最稳（Windows 原生风格下
+    # QSpinBox 箭头会失效/点击被吞），统一跨平台观感。
+    app.setStyle(
+        "Fusion"
+    )
+
     app.setApplicationName(
-        "MultiTapKey"
+        "TapLayer"
     )
 
     app.setQuitOnLastWindowClosed(
@@ -87,7 +151,7 @@ def main() -> int:
         if error == QLockFile.PermissionError:
             QMessageBox.critical(
                 None,
-                "MultiTapKey",
+                "TapLayer",
                 "Unable to create "
                 "single-instance lock.",
             )
@@ -95,7 +159,7 @@ def main() -> int:
         elif error == QLockFile.UnknownError:
             QMessageBox.critical(
                 None,
-                "MultiTapKey",
+                "TapLayer",
                 "Unknown single-instance "
                 "lock error.",
             )
@@ -103,8 +167,8 @@ def main() -> int:
         else:
             QMessageBox.information(
                 None,
-                "MultiTapKey",
-                "Another MultiTapKey instance "
+                "TapLayer",
+                "Another TapLayer instance "
                 "is already running.",
             )
 
@@ -201,6 +265,25 @@ def main() -> int:
     )
 
     pump.start()
+
+    # 全局暂停热键 Alt+Ctrl+F9（注册失败不影响主功能）
+    hotkey_filter = _HotkeyFilter(
+        window.toggle_pause
+    )
+    app.installNativeEventFilter(
+        hotkey_filter
+    )
+
+    if not user32.RegisterHotKey(
+        None,
+        HOTKEY_ID,
+        MOD_ALT | MOD_CONTROL,
+        VK_F9,
+    ):
+        log.warning(
+            "failed to register global "
+            "pause hotkey Alt+Ctrl+F9"
+        )
 
     app.aboutToQuit.connect(
         engine.shutdown
