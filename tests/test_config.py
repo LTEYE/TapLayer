@@ -482,13 +482,29 @@ def test_default_config_profiles_populated():
         assert len(profile.bindings) > 0
 
 
-def test_default_trigger_unset():
+def test_default_trigger_example():
     config = default_config()
 
     binding = config.profiles[0].bindings[0]
 
-    # 默认模板触发键未设置（"选择热键"状态），由用户录制
-    assert binding.trigger == ()
+    # 出厂示例：触发键 Ctrl+Shift+Alt+Q，1/2/3 击 → Alt+Q / Alt+W / Alt+E
+    assert binding.trigger == (
+        "Ctrl",
+        "Shift",
+        "Alt",
+        "Q",
+    )
+
+    taps = dict(
+        binding.gestures.taps
+    )
+
+    assert taps[1].keys == ("Alt", "Q")
+    assert taps[2].keys == ("Alt", "W")
+    assert taps[3].keys == ("Alt", "E")
+
+    # 长按未设置（默认停用）
+    assert binding.gestures.hold.type == "disabled"
 
 
 def test_empty_trigger_allowed_as_unset():
