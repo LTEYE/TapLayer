@@ -6,7 +6,7 @@ import sys
 import winreg
 
 
-VALUE_NAME = "MultiTapKey"
+VALUE_NAME = "TapLayer"
 
 RUN_KEY = (
     r"Software\Microsoft\Windows\CurrentVersion\Run"

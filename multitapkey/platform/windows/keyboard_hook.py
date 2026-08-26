@@ -28,12 +28,23 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 WH_KEYBOARD_LL = 13
+WH_MOUSE_LL = 14
 
 WM_KEYDOWN = 0x0100
 WM_KEYUP = 0x0101
 WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
 WM_QUIT = 0x0012
+
+# 鼠标消息
+WM_LBUTTONDOWN = 0x0201
+WM_LBUTTONUP = 0x0202
+WM_RBUTTONDOWN = 0x0204
+WM_RBUTTONUP = 0x0205
+WM_MBUTTONDOWN = 0x0207
+WM_MBUTTONUP = 0x0208
+WM_XBUTTONDOWN = 0x020B
+WM_XBUTTONUP = 0x020C
 
 HC_ACTION = 0
 LLKHF_INJECTED = 0x00000010
@@ -48,6 +59,16 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
     _fields_ = [
         ("vkCode", wt.DWORD),
         ("scanCode", wt.DWORD),
+        ("flags", wt.DWORD),
+        ("time", wt.DWORD),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class MSLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [
+        ("pt", wt.POINT),
+        ("mouseData", wt.DWORD),
         ("flags", wt.DWORD),
         ("time", wt.DWORD),
         ("dwExtraInfo", ctypes.c_size_t),
@@ -121,6 +142,10 @@ class WindowsKeyboardBackend:
         self._capture_start = 0.0
         self._capture_held: set[str] = set()
         self._capture_results: queue.SimpleQueue = queue.SimpleQueue()
+        # 录制时鼠标是否悬停在"热键区"（蓝色按键显示区）上。
+        # 由 UI 侧 enter/leave 事件维护（跨线程读 bool 安全）——
+        # 不依赖坐标换算，DPI/多屏/窗口拖动都无误差。
+        self._mouse_in_area = False
 
         self._suppressed_down_vks: set[int] = set()
 
@@ -135,6 +160,8 @@ class WindowsKeyboardBackend:
         self._thread_id = 0
         self._hook = None
         self._proc = None
+        self._mouse_hook = None
+        self._mouse_proc = None
 
     # ------------------------------------------------------------------
     # Public backend API
@@ -167,6 +194,13 @@ class WindowsKeyboardBackend:
         self._capture_held.clear()
         self._capture_start = time.monotonic()
         self._drain_capture_results()
+
+    def set_mouse_in_area(
+        self,
+        inside: bool,
+    ) -> None:
+        """录制时 UI 同步"鼠标是否在热键区上"（enter/leave 事件维护）。"""
+        self._mouse_in_area = bool(inside)
 
     def cancel_capture(self) -> None:
         self._capture_mode = False
@@ -266,6 +300,27 @@ class WindowsKeyboardBackend:
                 )
                 return
 
+            # 鼠标钩子（WH_MOUSE_LL）：让鼠标键（侧键/中键）也能当触发键。
+            # 与键盘钩子同一线程、同一消息循环；回调同样必须极快返回。
+            self._mouse_proc = HOOKPROC(
+                self._mouse_proc_callback
+            )
+
+            self._mouse_hook = (
+                user32.SetWindowsHookExW(
+                    WH_MOUSE_LL,
+                    self._mouse_proc,
+                    None,
+                    0,
+                )
+            )
+
+            if not self._mouse_hook:
+                self.init_error = (
+                    ctypes.get_last_error() or 1
+                )
+                return
+
             self._started.set()
 
             msg = wt.MSG()
@@ -303,6 +358,12 @@ class WindowsKeyboardBackend:
                     self._hook
                 )
                 self._hook = None
+
+            if self._mouse_hook:
+                user32.UnhookWindowsHookEx(
+                    self._mouse_hook
+                )
+                self._mouse_hook = None
 
             self._thread_id = 0
 
@@ -515,6 +576,261 @@ class WindowsKeyboardBackend:
             # 任何意外都“放行”，绝不因报错而吞掉按键（失败开放原则）。
             log.exception(
                 "keyboard hook callback error; passing event through"
+            )
+            try:
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+            except Exception:
+                return 0
+
+    # ------------------------------------------------------------------
+    # Mouse hook callback（WH_MOUSE_LL：鼠标键也可作触发键）
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _mouse_key(
+        w_param,
+        mouse_data: int,
+    ) -> str | None:
+        if w_param in (
+            WM_LBUTTONDOWN,
+            WM_LBUTTONUP,
+        ):
+            return "MouseLeft"
+
+        if w_param in (
+            WM_RBUTTONDOWN,
+            WM_RBUTTONUP,
+        ):
+            return "MouseRight"
+
+        if w_param in (
+            WM_MBUTTONDOWN,
+            WM_MBUTTONUP,
+        ):
+            return "MouseMiddle"
+
+        if w_param in (
+            WM_XBUTTONDOWN,
+            WM_XBUTTONUP,
+        ):
+            # XBUTTON 标识在 mouseData 高位字：1 = X1，2 = X2
+            button = (
+                mouse_data >> 16
+            ) & 0xFFFF
+
+            if button == 1:
+                return "MouseX1"
+
+            if button == 2:
+                return "MouseX2"
+
+        return None
+
+    def _mouse_proc_callback(
+        self,
+        n_code,
+        w_param,
+        l_param,
+    ):
+        try:
+            if (
+                n_code < 0
+                or n_code != HC_ACTION
+            ):
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            info = ctypes.cast(
+                l_param,
+                ctypes.POINTER(
+                    MSLLHOOKSTRUCT
+                ),
+            ).contents
+
+            # 注入的输入放行（不解释、不拦截）
+            if info.dwExtraInfo == INJECTED_MARKER:
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            key = self._mouse_key(
+                w_param,
+                int(info.mouseData),
+            )
+
+            if key is None:
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            is_down = w_param in (
+                WM_LBUTTONDOWN,
+                WM_RBUTTONDOWN,
+                WM_MBUTTONDOWN,
+                WM_XBUTTONDOWN,
+            )
+
+            vk = key_to_vk(key)
+
+            # 2. Suppressed（单键触发键/录制捕获键被拦截后的按住与释放）
+            if vk in self._suppressed_down_vks:
+                if is_down:
+                    return 1
+
+                self._suppressed_down_vks.discard(vk)
+                self._capture_held.discard(key)
+                self._pressed.discard(key)
+                self._deactivate_affected(key)
+                return 1
+
+            # 3. Chord capture（录制器：鼠标键也能录进去）
+            if self._capture_mode:
+                if is_down:
+                    if (
+                        time.monotonic()
+                        - self._capture_start
+                        > CAPTURE_TIMEOUT_S
+                    ):
+                        self.cancel_capture()
+                        return user32.CallNextHookEx(
+                            None,
+                            n_code,
+                            w_param,
+                            l_param,
+                        )
+
+                    # 鼠标键只有在"热键区"（蓝色按键显示区）上
+                    # 悬停时才捕获；否则放行，保证用户还能操作
+                    # 录制弹窗的按钮（确认/取消）。
+                    if (
+                        key.startswith("Mouse")
+                        and not self._mouse_in_area
+                    ):
+                        return user32.CallNextHookEx(
+                            None,
+                            n_code,
+                            w_param,
+                            l_param,
+                        )
+
+                    if key in self._capture_held:
+                        return 1
+
+                    if (
+                        len(self._capture_held)
+                        >= MAX_CHORD_KEYS
+                    ):
+                        return 1
+
+                    self._capture_held.add(key)
+                    self._suppressed_down_vks.add(vk)
+
+                    self._capture_results.put(
+                        CaptureResult(
+                            kind="key",
+                            key=key,
+                        )
+                    )
+
+                    return 1
+
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            # 4. Trigger chord matching
+            if self._enabled:
+                if is_down:
+                    if key in self._pressed:
+                        return user32.CallNextHookEx(
+                            None,
+                            n_code,
+                            w_param,
+                            l_param,
+                        )
+
+                    self._pressed.add(key)
+
+                    matched = (
+                        self._match_trigger_chord()
+                    )
+
+                    if matched is not None:
+                        display, chord_set = (
+                            matched
+                        )
+
+                        self._active.add(display)
+
+                        self.events.put(
+                            RawKeyEvent(
+                                key=display,
+                                is_down=True,
+                                injected=False,
+                                timestamp=time.monotonic(),
+                            )
+                        )
+
+                        if len(chord_set) == 1:
+                            # 单键触发：拦截该鼠标键，避免到达目标窗口
+                            self._suppressed_down_vks.add(
+                                key_to_vk(
+                                    next(
+                                        iter(
+                                            chord_set
+                                        )
+                                    )
+                                )
+                            )
+                            return 1
+
+                    return user32.CallNextHookEx(
+                        None,
+                        n_code,
+                        w_param,
+                        l_param,
+                    )
+
+                # is_up
+                self._pressed.discard(key)
+                self._deactivate_affected(key)
+
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            # 5. Unhandled event.
+            return user32.CallNextHookEx(
+                None,
+                n_code,
+                w_param,
+                l_param,
+            )
+        except Exception:
+            # 任何意外都"放行"，绝不因报错而吞掉鼠标事件（失败开放原则）。
+            log.exception(
+                "mouse hook callback error; passing event through"
             )
             try:
                 return user32.CallNextHookEx(
