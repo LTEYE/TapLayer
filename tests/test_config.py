@@ -585,3 +585,107 @@ def test_empty_chord_action_allowed_as_unset():
         type="chord",
         keys=(),
     )
+
+
+def test_interval_ms_roundtrip():
+    data = make_dict(
+        profiles={
+            "default": {
+                "bindings": [
+                    {
+                        "trigger": chord("F24"),
+                        "enabled": True,
+                        "gestures": {
+                            "taps": {
+                                "2": {
+                                    "type": "chord",
+                                    "keys": ["F5"],
+                                    "interval_ms": 300,
+                                },
+                            },
+                            "hold": {
+                                "type": "chord",
+                                "keys": ["F7"],
+                                "hold_ms": 800,
+                            },
+                        },
+                    },
+                ],
+            },
+            "Gaming": {"bindings": []},
+            "Work": {"bindings": []},
+        }
+    )
+
+    config = validate_and_build(data)
+
+    binding = config.profiles[0].bindings[0]
+
+    tap2 = dict(binding.gestures.taps)[2]
+
+    assert tap2.interval_ms == 300
+    assert binding.gestures.hold.hold_ms == 800
+
+    out = to_dict(config)
+
+    gestures = out["profiles"]["default"][
+        "bindings"
+    ][0]["gestures"]
+
+    assert (
+        gestures["taps"]["2"]["interval_ms"]
+        == 300
+    )
+    assert gestures["hold"]["hold_ms"] == 800
+
+
+def test_interval_ms_defaults_none():
+    config = validate_and_build(
+        make_dict()
+    )
+
+    binding = config.profiles[0].bindings[0]
+
+    tap2 = dict(binding.gestures.taps)[2]
+
+    assert tap2.interval_ms is None
+    assert (
+        binding.gestures.hold.hold_ms
+        is None
+    )
+
+
+def test_interval_ms_invalid_rejected():
+    data = make_dict()
+    b = binding_dict()
+    b["gestures"]["taps"]["2"][
+        "interval_ms"
+    ] = 5000
+
+    with pytest.raises(ConfigError):
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {"bindings": [b]},
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
+                }
+            )
+        )
+
+
+def test_hold_ms_invalid_rejected():
+    data = make_dict()
+    b = binding_dict()
+    b["gestures"]["hold"]["hold_ms"] = -1
+
+    with pytest.raises(ConfigError):
+        validate_and_build(
+            make_dict(
+                profiles={
+                    "default": {"bindings": [b]},
+                    "Gaming": {"bindings": []},
+                    "Work": {"bindings": []},
+                }
+            )
+        )

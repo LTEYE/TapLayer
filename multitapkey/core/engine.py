@@ -258,6 +258,24 @@ class Engine:
             if max_taps < 1:
                 continue
 
+            # 每级连击自定义窗口（缺省用全局）
+            tap_intervals: dict[int, int] = {}
+
+            for tap_count, tap_action in (
+                binding.gestures.taps
+            ):
+                if (
+                    tap_action.interval_ms
+                    is not None
+                ):
+                    tap_intervals[tap_count] = (
+                        tap_action.interval_ms
+                    )
+
+            hold_override = (
+                binding.gestures.hold.hold_ms
+            )
+
             new_machines[display] = (
                 TapStateMachine(
                     trigger_key=display,
@@ -271,6 +289,13 @@ class Engine:
                             trig,
                             gesture,
                         )
+                    ),
+                    tap_intervals=(
+                        tap_intervals
+                        or None
+                    ),
+                    hold_override_ms=(
+                        hold_override
                     ),
                 )
             )

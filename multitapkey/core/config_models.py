@@ -39,6 +39,8 @@ MAX_TAP_COUNT = 9
 ACTION_FIELDS = {
     "type",
     "keys",
+    "interval_ms",
+    "hold_ms",
 }
 
 GESTURE_FIELDS = {
@@ -92,6 +94,9 @@ class ConfigError(ValueError):
 class ActionSpec:
     type: str  # "chord" | "disabled"
     keys: tuple[str, ...] = ()
+    # 触发参数（None = 使用全局值，旧配置向后兼容）：
+    interval_ms: int | None = None  # 连击窗口：多少毫秒内按出下一击
+    hold_ms: int | None = None  # 长按触发时间（仅 hold 手势使用）
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,6 +200,33 @@ def _require_list(
     return value
 
 
+def _parse_optional_int(
+    obj: dict[str, Any],
+    field: str,
+    lo: int,
+    hi: int,
+) -> int | None:
+    value = obj.get(field)
+
+    if value is None:
+        return None
+
+    if type(value) is not int:
+        raise ConfigError(
+            "invalid_type",
+            field=field,
+            expected="int",
+        )
+
+    if not lo <= value <= hi:
+        raise ConfigError(
+            "invalid_range",
+            field=field,
+        )
+
+    return value
+
+
 def _validate_action(
     data: Any,
 ) -> ActionSpec:
@@ -272,9 +304,24 @@ def _validate_action(
         raw_keys
     )
 
+    interval_ms = _parse_optional_int(
+        obj,
+        "interval_ms",
+        50,
+        1000,
+    )
+    hold_ms = _parse_optional_int(
+        obj,
+        "hold_ms",
+        100,
+        5000,
+    )
+
     return ActionSpec(
         type="chord",
         keys=canonical,
+        interval_ms=interval_ms,
+        hold_ms=hold_ms,
     )
 
 
@@ -739,10 +786,22 @@ def get_profile(
 def _action_to_dict(
     action: ActionSpec,
 ) -> dict[str, Any]:
-    return {
+    data: dict[str, Any] = {
         "type": action.type,
         "keys": list(action.keys),
     }
+
+    if action.interval_ms is not None:
+        data["interval_ms"] = (
+            action.interval_ms
+        )
+
+    if action.hold_ms is not None:
+        data["hold_ms"] = (
+            action.hold_ms
+        )
+
+    return data
 
 
 def _gestures_to_dict(

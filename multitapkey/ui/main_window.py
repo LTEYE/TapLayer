@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from multitapkey.core.chord import (
+    canonicalize_keys,
     chord_display,
 )
 from multitapkey.core.config_models import (
@@ -95,11 +96,17 @@ _THEME_QSS = {
         " color: #2C2C2A; background: transparent; }"
         "#gestureParam { font-size: 12px; color: #5F5E5A;"
         " background: transparent; }"
-        "QComboBox, QSpinBox { background: #FFFFFF;"
+        "QComboBox { background: #FFFFFF;"
         " color: #2C2C2A; border: 0.5px solid #D3D1C7;"
         " border-radius: 4px; }"
         "QComboBox QAbstractItemView { background: #FFFFFF;"
         " color: #2C2C2A; selection-background-color: #E6F1FB; }"
+        "QSpinBox { background: #FFFFFF; color: #2C2C2A;"
+        " border: 0.5px solid #D3D1C7; }"
+        "QSpinBox::up-button, QSpinBox::down-button {"
+        " width: 18px; border: none; background: #F1EFE8; }"
+        "QSpinBox::up-button:hover, QSpinBox::down-button:hover {"
+        " background: #D3D1C7; }"
         "QCheckBox { color: #2C2C2A; background: transparent;"
         " border: none; }"
         "QCheckBox::indicator { width: 16px; height: 16px;"
@@ -107,6 +114,8 @@ _THEME_QSS = {
         " background: #E8E8E8; }"
         "QCheckBox::indicator:checked { background: #1a6cff;"
         " border-color: #1a6cff; }"
+        "QCheckBox#dangerCheck::indicator:checked {"
+        " background: #E24B4A; border-color: #E24B4A; }"
         "#leftTitle { font-size: 14px; font-weight: 500;"
         " color: #2C2C2A; }"
         "#editorTitle { font-size: 15px; font-weight: 500;"
@@ -155,11 +164,17 @@ _THEME_QSS = {
         " color: #E0E0E0; background: transparent; }"
         "#gestureParam { font-size: 12px; color: #9AA0A6;"
         " background: transparent; }"
-        "QComboBox, QSpinBox { background: #2B2B2B;"
+        "QComboBox { background: #2B2B2B;"
         " color: #E0E0E0; border: 0.5px solid #3C3C3C;"
         " border-radius: 4px; }"
         "QComboBox QAbstractItemView { background: #2B2B2B;"
         " color: #E0E0E0; selection-background-color: #1F3B57; }"
+        "QSpinBox { background: #2B2B2B; color: #E0E0E0;"
+        " border: 0.5px solid #3C3C3C; }"
+        "QSpinBox::up-button, QSpinBox::down-button {"
+        " width: 18px; border: none; background: #3C3C3C; }"
+        "QSpinBox::up-button:hover, QSpinBox::down-button:hover {"
+        " background: #555555; }"
         "QCheckBox { color: #E0E0E0; background: transparent;"
         " border: none; }"
         "QCheckBox::indicator { width: 16px; height: 16px;"
@@ -167,6 +182,8 @@ _THEME_QSS = {
         " background: #3C3C3C; }"
         "QCheckBox::indicator:checked { background: #1a6cff;"
         " border-color: #1a6cff; }"
+        "QCheckBox#dangerCheck::indicator:checked {"
+        " background: #A32D2D; border-color: #A32D2D; }"
         "#leftTitle { font-size: 14px; font-weight: 500;"
         " color: #E0E0E0; }"
         "#editorTitle { font-size: 15px; font-weight: 500;"
@@ -1278,9 +1295,6 @@ class MainWindow(QMainWindow):
     def _add_profile(
         self,
     ) -> None:
-        if not self._confirm_unsaved():
-            return
-
         from PySide6.QtWidgets import (
             QDialogButtonBox,
             QInputDialog,
@@ -1780,21 +1794,6 @@ class MainWindow(QMainWindow):
         ):
             return
 
-        if not self._confirm_unsaved():
-            self.bindingList.blockSignals(
-                True
-            )
-            self.bindingList.setCurrentRow(
-                self._current_binding_index
-                if self._current_binding_index
-                is not None
-                else 0
-            )
-            self.bindingList.blockSignals(
-                False
-            )
-            return
-
         self._sync_current_binding()
 
         self._current_binding_index = row
@@ -2038,6 +2037,8 @@ class MainWindow(QMainWindow):
 
         self._update_gesture_param_labels()
 
+        self._update_monotonic_warnings()
+
     def _build_gesture_group(
         self,
         key: str,
@@ -2066,6 +2067,9 @@ class MainWindow(QMainWindow):
             self.i18n.tr(
                 "binding.disabled"
             )
+        )
+        disabled.setObjectName(
+            "dangerCheck"
         )
 
         disabled.setChecked(
@@ -2164,9 +2168,57 @@ class MainWindow(QMainWindow):
             "gestureParam"
         )
         param_row.addWidget(
-            param_label,
-            1,
+            param_label
         )
+
+        param_spin = QSpinBox()
+        param_spin.setObjectName(
+            "gestureParamSpin"
+        )
+
+        if key == "hold":
+            param_label.setText(
+                self.i18n.tr(
+                    "binding.hold_label"
+                )
+            )
+            param_spin.setRange(
+                100,
+                5000,
+            )
+        else:
+            param_label.setText(
+                self.i18n.tr(
+                    "binding.window_label"
+                )
+            )
+            param_spin.setRange(
+                50,
+                1000,
+            )
+
+        param_spin.setSingleStep(
+            10
+        )
+        param_row.addWidget(
+            param_spin
+        )
+
+        global_check = QCheckBox(
+            self.i18n.tr(
+                "binding.global"
+            )
+        )
+        global_check.setToolTip(
+            self.i18n.tr(
+                "binding.global_tip"
+            )
+        )
+        param_row.addWidget(
+            global_check
+        )
+
+        param_row.addStretch()
 
         param_row.addWidget(
             disabled
@@ -2176,11 +2228,67 @@ class MainWindow(QMainWindow):
             param_row
         )
 
+        # 初始值：自定义或全局
+        custom = (
+            action.get("hold_ms")
+            if key == "hold"
+            else action.get("interval_ms")
+        )
+
+        if custom is not None:
+            param_spin.setValue(
+                custom
+            )
+            global_check.setChecked(
+                False
+            )
+        else:
+            settings = self._working[
+                "settings"
+            ]
+            default_value = (
+                settings["hold_threshold_ms"]
+                if key == "hold"
+                else settings[
+                    "double_tap_interval_ms"
+                ]
+            )
+            param_spin.setValue(
+                default_value
+            )
+            global_check.setChecked(
+                True
+            )
+
+        param_spin.setEnabled(
+            not global_check.isChecked()
+        )
+
+        global_check.toggled.connect(
+            lambda checked,
+            s=param_spin:
+            s.setEnabled(not checked)
+        )
+        global_check.toggled.connect(
+            self._mark_editor_changed
+        )
+        global_check.toggled.connect(
+            self._update_monotonic_warnings
+        )
+        param_spin.valueChanged.connect(
+            self._mark_editor_changed
+        )
+        param_spin.valueChanged.connect(
+            self._update_monotonic_warnings
+        )
+
         self._gesture_widgets[key] = {
             "disabled": disabled,
             "button": edit_button,
             "value": value_label,
             "param": param_label,
+            "spin": param_spin,
+            "global": global_check,
             "chord": chord,
         }
 
@@ -2269,19 +2377,90 @@ class MainWindow(QMainWindow):
         for key, widgets in (
             self._gesture_widgets.items()
         ):
-            if key == "hold":
-                text = self.i18n.tr(
-                    "binding.hold_time",
-                    value=hold_time,
+            # 仅"使用全局"模式下手势卡片数值跟随全局设置变化
+            if not widgets["global"].isChecked():
+                continue
+
+            value = (
+                hold_time
+                if key == "hold"
+                else interval
+            )
+
+            widgets["spin"].blockSignals(
+                True
+            )
+            widgets["spin"].setValue(
+                value
+            )
+            widgets["spin"].blockSignals(
+                False
+            )
+
+    def _update_monotonic_warnings(
+        self,
+    ) -> None:
+        """非单调窗口仅提示不阻断：后级窗口大于前级时在卡片参数行标红。"""
+        if not self._gesture_widgets:
+            return
+
+        levels = [
+            (int(key), key)
+            for key in self._gesture_widgets
+            if key != "hold"
+        ]
+        levels.sort()
+
+        warning = self.i18n.tr(
+            "warning.monotonic"
+        )
+        label_key = self.i18n.tr(
+            "binding.window_label"
+        )
+
+        prev_effective: int | None = None
+
+        for _count, key in levels:
+            widgets = self._gesture_widgets[
+                key
+            ]
+            effective = (
+                widgets["spin"].value()
+            )
+            param = widgets["param"]
+
+            if (
+                prev_effective is not None
+                and effective > prev_effective
+            ):
+                param.setText(
+                    f"{label_key}  {warning}"
+                )
+                param.setStyleSheet(
+                    "color: #E24B4A;"
                 )
             else:
-                text = self.i18n.tr(
-                    "binding.interval",
-                    value=interval,
+                param.setText(
+                    label_key
+                )
+                param.setStyleSheet(
+                    ""
                 )
 
-            widgets["param"].setText(
-                text
+            prev_effective = effective
+
+        hold = self._gesture_widgets.get(
+            "hold"
+        )
+
+        if hold is not None:
+            hold["param"].setText(
+                self.i18n.tr(
+                    "binding.hold_label"
+                )
+            )
+            hold["param"].setStyleSheet(
+                ""
             )
 
     def _toggle_gesture(
@@ -2464,9 +2643,63 @@ class MainWindow(QMainWindow):
         if chord is None:
             return
 
-        self._trigger_chord = chord
+        canonical = canonicalize_keys(
+            chord
+        )
+
+        if self._trigger_conflicts(
+            canonical
+        ):
+            QMessageBox.warning(
+                self,
+                self.i18n.tr(
+                    "conflict.title"
+                ),
+                self.i18n.tr(
+                    "conflict.trigger"
+                ),
+            )
+            return
+
+        self._trigger_chord = canonical
         self._update_trigger_button()
         self._mark_editor_changed()
+
+    def _trigger_conflicts(
+        self,
+        canonical: tuple[str, ...],
+    ) -> bool:
+        if not canonical:
+            return False
+
+        profile = self._working_profile()
+
+        for index, other in enumerate(
+            profile["bindings"]
+        ):
+            if (
+                index
+                == self._current_binding_index
+            ):
+                continue
+
+            other_keys = other[
+                "trigger"
+            ].get(
+                "keys",
+                [],
+            )
+
+            if (
+                other_keys
+                and canonicalize_keys(
+                    other_keys
+                )
+                == canonical
+            ):
+                return True
+
+        return False
 
     def _record_gesture(
         self,
@@ -2544,55 +2777,6 @@ class MainWindow(QMainWindow):
                 ""
             )
             self._dirty_label.hide()
-
-    def _confirm_unsaved(
-        self,
-    ) -> bool:
-        if not (
-            self._editor_dirty
-            or self._is_dirty()
-        ):
-            return True
-
-        box = QMessageBox(
-            self
-        )
-        box.setWindowTitle(
-            self.i18n.tr(
-                "unsaved.title"
-            )
-        )
-        box.setText(
-            self.i18n.tr(
-                "unsaved.message"
-            )
-        )
-        box.setIcon(
-            QMessageBox.Icon.Question
-        )
-
-        continue_button = box.addButton(
-            self.i18n.tr(
-                "unsaved.continue"
-            ),
-            QMessageBox.ButtonRole.AcceptRole,
-        )
-        cancel_button = box.addButton(
-            self.i18n.tr(
-                "recorder.cancel"
-            ),
-            QMessageBox.ButtonRole.RejectRole,
-        )
-        box.setDefaultButton(
-            cancel_button
-        )
-
-        box.exec()
-
-        return (
-            box.clickedButton()
-            == continue_button
-        )
 
     def _settings_changed(
         self,
@@ -2774,6 +2958,22 @@ class MainWindow(QMainWindow):
                     "keys": list(chord),
                 }
 
+                if key == "hold":
+                    if not widgets[
+                        "global"
+                    ].isChecked():
+                        action["hold_ms"] = (
+                            widgets[
+                                "spin"
+                            ].value()
+                        )
+                elif not widgets[
+                    "global"
+                ].isChecked():
+                    action["interval_ms"] = (
+                        widgets["spin"].value()
+                    )
+
             if key == "hold":
                 gestures["hold"] = action
             else:
@@ -2800,9 +3000,6 @@ class MainWindow(QMainWindow):
     def _add_binding(
         self,
     ) -> None:
-        if not self._confirm_unsaved():
-            return
-
         self._sync_controls_to_working()
 
         profile = self._working_profile()
@@ -2834,9 +3031,6 @@ class MainWindow(QMainWindow):
     def _delete_binding(
         self,
     ) -> None:
-        if not self._confirm_unsaved():
-            return
-
         self._sync_controls_to_working()
 
         if (

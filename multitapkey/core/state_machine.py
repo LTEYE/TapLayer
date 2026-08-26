@@ -61,6 +61,8 @@ class TapStateMachine:
         max_taps: int,
         on_gesture: Callable[[Gesture], None],
         on_error: Callable[[Exception], None] | None = None,
+        tap_intervals: dict[int, int] | None = None,
+        hold_override_ms: int | None = None,
     ) -> None:
         self.trigger_key = trigger_key
         self.double_tap_interval_ms = (
@@ -68,6 +70,17 @@ class TapStateMachine:
         )
         self.hold_threshold_ms = (
             hold_threshold_ms
+        )
+
+        # 每级连击自定义窗口（count -> ms），缺省用全局
+        self.tap_intervals = (
+            dict(tap_intervals)
+            if tap_intervals
+            else {}
+        )
+        # 长按自定义触发时间（None 用全局）
+        self.hold_override_ms = (
+            hold_override_ms
         )
 
         if not 1 <= max_taps <= MAX_TAP_COUNT:
@@ -84,6 +97,25 @@ class TapStateMachine:
         )
 
         self.reset()
+
+    def _window_ms(
+        self,
+        count: int,
+    ) -> int:
+        """第 count 击的连击窗口（多少毫秒内按出下一击）。"""
+        return self.tap_intervals.get(
+            count,
+            self.double_tap_interval_ms,
+        )
+
+    def _hold_ms(
+        self,
+    ) -> int:
+        return (
+            self.hold_override_ms
+            if self.hold_override_ms is not None
+            else self.hold_threshold_ms
+        )
 
     @staticmethod
     def _default_error_handler(
@@ -141,7 +173,7 @@ class TapStateMachine:
                 now - self._press_t
             ) * 1000.0
 
-            if elapsed_ms >= self.hold_threshold_ms:
+            if elapsed_ms >= self._hold_ms():
                 self._long_fired = True
                 self._state = _State.LONG_DONE
                 self._fire(Gesture.LONG)
@@ -153,7 +185,12 @@ class TapStateMachine:
                 now - self._up_t
             ) * 1000.0
 
-            if elapsed_ms >= self.double_tap_interval_ms:
+            if (
+                elapsed_ms
+                >= self._window_ms(
+                    self._count + 1
+                )
+            ):
                 self._resolve_waiting()
 
     def _handle_down(
@@ -167,7 +204,9 @@ class TapStateMachine:
 
             if (
                 elapsed_ms
-                < self.double_tap_interval_ms
+                < self._window_ms(
+                    self._count + 1
+                )
             ):
                 self._count += 1
             else:
@@ -199,7 +238,7 @@ class TapStateMachine:
 
         if (
             not self._long_fired
-            and elapsed_ms >= self.hold_threshold_ms
+            and elapsed_ms >= self._hold_ms()
         ):
             self._state = _State.IDLE
             self._count = 0

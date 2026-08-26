@@ -4,7 +4,11 @@ from multitapkey.core.state_machine import (
 )
 
 
-def make(max_taps=3):
+def make(
+    max_taps=3,
+    tap_intervals=None,
+    hold_override_ms=None,
+):
     fired = []
 
     machine = TapStateMachine(
@@ -13,6 +17,8 @@ def make(max_taps=3):
         hold_threshold_ms=500,
         max_taps=max_taps,
         on_gesture=fired.append,
+        tap_intervals=tap_intervals,
+        hold_override_ms=hold_override_ms,
     )
 
     return machine, fired
@@ -329,3 +335,50 @@ def test_second_tap_long_is_long():
     assert fired == [
         Gesture.LONG
     ]
+
+
+def test_per_level_window_slow_third_tap():
+    machine, fired = make(
+        tap_intervals={2: 200},
+    )
+
+    machine.on_key("F24", True, 0.0)
+    machine.on_key("F24", False, 0.05)
+    machine.on_key("F24", True, 0.30)
+    machine.on_key("F24", False, 0.35)
+    machine.check_timeouts(0.90)
+
+    assert fired == [
+        Gesture.SINGLE,
+        Gesture.SINGLE,
+    ]
+
+
+def test_per_level_window_fast_second_tap():
+    machine, fired = make(
+        tap_intervals={2: 200},
+    )
+
+    machine.on_key("F24", True, 0.0)
+    machine.on_key("F24", False, 0.05)
+    machine.on_key("F24", True, 0.15)
+    machine.on_key("F24", False, 0.20)
+    # 等待第 3 击：窗口 = 全局 250ms（第 3 级未自定义）
+    machine.check_timeouts(0.40)
+
+    assert fired == []
+
+    machine.check_timeouts(0.50)
+
+    assert fired == [Gesture.DOUBLE]
+
+
+def test_hold_override():
+    machine, fired = make(
+        hold_override_ms=300,
+    )
+
+    machine.on_key("F24", True, 0.0)
+    machine.check_timeouts(0.35)
+
+    assert fired == [Gesture.LONG]
