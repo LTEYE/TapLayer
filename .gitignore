@@ -4,6 +4,10 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+build_v*/
+dist_v*/
 *.spec
 *.log
 .workbuddy
+docs
+config.json
