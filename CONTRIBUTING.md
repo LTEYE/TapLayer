@@ -1,6 +1,6 @@
-# Contributing to MultiTapKey
+# Contributing to TapLayer
 
-## v0.1 Scope
+## v1.0 Scope
 
 The current release officially supports Windows 10/11.
 
