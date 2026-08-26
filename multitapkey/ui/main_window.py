@@ -103,10 +103,6 @@ _THEME_QSS = {
         " color: #2C2C2A; selection-background-color: #E6F1FB; }"
         "QSpinBox { background: #FFFFFF; color: #2C2C2A;"
         " border: 0.5px solid #D3D1C7; }"
-        "QSpinBox::up-button, QSpinBox::down-button {"
-        " width: 18px; border: none; background: #F1EFE8; }"
-        "QSpinBox::up-button:hover, QSpinBox::down-button:hover {"
-        " background: #D3D1C7; }"
         "QCheckBox { color: #2C2C2A; background: transparent;"
         " border: none; }"
         "QCheckBox::indicator { width: 16px; height: 16px;"
@@ -171,10 +167,6 @@ _THEME_QSS = {
         " color: #E0E0E0; selection-background-color: #1F3B57; }"
         "QSpinBox { background: #2B2B2B; color: #E0E0E0;"
         " border: 0.5px solid #3C3C3C; }"
-        "QSpinBox::up-button, QSpinBox::down-button {"
-        " width: 18px; border: none; background: #3C3C3C; }"
-        "QSpinBox::up-button:hover, QSpinBox::down-button:hover {"
-        " background: #555555; }"
         "QCheckBox { color: #E0E0E0; background: transparent;"
         " border: none; }"
         "QCheckBox::indicator { width: 16px; height: 16px;"
@@ -3014,7 +3006,7 @@ class MainWindow(QMainWindow):
             )
         )
 
-        self._current_binding_index = (
+        new_index = (
             len(
                 profile[
                     "bindings"
@@ -3023,9 +3015,16 @@ class MainWindow(QMainWindow):
             - 1
         )
 
+        # 注意：不能在这里手动设置 _current_binding_index = new_index。
+        # _refresh_binding_list 内部的 setCurrentRow 会触发
+        # _binding_selected；若索引已等于新行，选中事件被短路，
+        # 新绑定编辑器永远不会加载（表现为"右边还是旧的"）。
+        # 正确的顺序：先刷新列表（选中旧行，sync 写回旧绑定），
+        # 再 setCurrentRow 新行 → _binding_selected 完成
+        # sync(旧)→index=新→load 新绑定。
         self._refresh_binding_list()
         self.bindingList.setCurrentRow(
-            self._current_binding_index
+            new_index
         )
 
     def _delete_binding(
@@ -3115,11 +3114,19 @@ class MainWindow(QMainWindow):
             self._current_binding_index
         ]
 
+        target = (
+            self._current_binding_index
+        )
+
+        # 同样先置 None 再刷新：让 setCurrentRow → _binding_selected
+        # 走完整流程重载编辑器，避免短路导致残留已删除绑定的内容。
+        self._current_binding_index = None
+
         if profile[
             "bindings"
         ]:
-            self._current_binding_index = min(
-                self._current_binding_index,
+            target = min(
+                target,
                 len(
                     profile[
                         "bindings"
@@ -3128,9 +3135,14 @@ class MainWindow(QMainWindow):
                 - 1,
             )
         else:
-            self._current_binding_index = None
+            target = -1
 
         self._refresh_binding_list()
+
+        if target >= 0:
+            self.bindingList.setCurrentRow(
+                target
+            )
 
     # ------------------------------------------------------------------
     # Settings
