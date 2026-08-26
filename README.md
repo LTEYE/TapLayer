@@ -88,4 +88,6 @@ Every little bit keeps the project alive. Thank you!
 
 ## License
 
-To be selected by the project owner. See [LICENSE_PLACEHOLDER](LICENSE_PLACEHOLDER).
+**GPL-3.0** — see the full text in [LICENSE](LICENSE).
+
+Free to use, modify and redistribute; any modified version of TapLayer must also be open source under GPL-3.0 (no closed-source forks). The author retains full copyright and may offer commercial licensing separately (dual-licensing model).

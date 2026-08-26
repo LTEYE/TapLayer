@@ -90,4 +90,6 @@ python -m venv .venv
 
 ## 开源协议
 
-由项目所有者选择中，暂未定。见 [LICENSE_PLACEHOLDER](LICENSE_PLACEHOLDER)。
+**GPL-3.0** —— [查看完整协议](LICENSE)。
+
+免费使用、修改、分发；任何基于 TapLayer 的修改版本也必须以 GPL-3.0 开源（防闭源吞并）。作者保留全部版权，可另行提供商业授权（双授权模式）。
