@@ -937,30 +937,60 @@ class WindowsKeyboardBackend:
     }
 
     @staticmethod
+    @staticmethod
     def _chord_matches(
         chord_set: frozenset[str],
         pressed: frozenset[str],
     ) -> bool:
-        # 精确匹配优先（触发键显式用了 LeftCtrl 等具体侧名）
+        # 精确匹配优先（触发键显式用了 LeftCtrl 等具体侧名，
+        # 且实际按下的就是该侧）
         if chord_set == pressed:
             return True
 
-        # 兼容：触发键用统一名（'Ctrl'）时，把实际按下的
-        # 左右侧（'LeftCtrl'/'RightCtrl'）归一后比较。
-        if any(
-            key in WindowsKeyboardBackend._SIDE_TO_BASE
-            for key in pressed
-        ):
-            norm = frozenset(
-                WindowsKeyboardBackend._SIDE_TO_BASE.get(
-                    key,
-                    key,
-                )
-                for key in pressed
+        # AltGr 兼容：Windows 把 Ctrl+Alt 组合识别为 AltGr，
+        # 低层钩子会额外收到"模拟的右 Alt"(VK_RMENU 0xA5)。
+        # 形态A：按左 Ctrl+左 Alt → pressed 同时出现左侧键 + 模拟 RightAlt，
+        #        移除多余的 RightAlt 后与触发键匹配；
+        # 形态B：左 Ctrl + 右 Alt（AltGr 物理键）→ RightAlt 就是 Alt 本体，不移除，
+        #        归一后（Ctrl+Alt）与触发键匹配。
+        # （纯右侧键 = 用户真按右 Alt+右 Ctrl，同样归一匹配，不移除。）
+        cleaned = pressed
+        has_alt_gr = (
+            "RightAlt" in pressed
+            and "LeftAlt" in pressed
+            and "RightAlt" not in chord_set
+            and any(
+                k in chord_set
+                for k in ("Alt", "LeftAlt", "RightAlt")
             )
-            return set(chord_set) == norm
+            and any(
+                k in chord_set
+                for k in ("Ctrl", "LeftCtrl", "RightCtrl")
+            )
+        )
+        if has_alt_gr:
+            cleaned = frozenset(
+                k for k in pressed if k != "RightAlt"
+            )
 
-        return False
+        # 左右修饰键双向归一：录制触发键时按的是左 Ctrl
+        # （存 LeftCtrl），用户测试时用右 Ctrl 或换手——
+        # 都视为同一触发键（精确分左右保留在输出动作侧）。
+        norm_chord = frozenset(
+            WindowsKeyboardBackend._SIDE_TO_BASE.get(
+                k,
+                k,
+            )
+            for k in chord_set
+        )
+        norm_pressed = frozenset(
+            WindowsKeyboardBackend._SIDE_TO_BASE.get(
+                k,
+                k,
+            )
+            for k in cleaned
+        )
+        return norm_chord == norm_pressed
 
     def _match_trigger_chord(
         self,
