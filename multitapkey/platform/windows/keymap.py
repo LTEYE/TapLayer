@@ -89,17 +89,27 @@ VK_BY_NAME: dict[str, int] = {
     "Ctrl": 0x11,
     "Alt": 0x12,
     "Win": 0x5B,
+    # 区分左右的修饰键（物理键码）
+    "LeftShift": 0xA0,
+    "RightShift": 0xA1,
+    "LeftCtrl": 0xA2,
+    "RightCtrl": 0xA3,
+    "LeftAlt": 0xA4,
+    "RightAlt": 0xA5,
+    "LeftWin": 0x5B,
+    "RightWin": 0x5C,
 }
 
 _PHYSICAL_MODIFIERS: dict[int, str] = {
-    0xA0: "Shift",
-    0xA1: "Shift",
-    0xA2: "Ctrl",
-    0xA3: "Ctrl",
-    0xA4: "Alt",
-    0xA5: "Alt",
-    0x5B: "Win",
-    0x5C: "Win",
+    # 物理键码 → 具体侧（左右独立）
+    0xA0: "LeftShift",
+    0xA1: "RightShift",
+    0xA2: "LeftCtrl",
+    0xA3: "RightCtrl",
+    0xA4: "LeftAlt",
+    0xA5: "RightAlt",
+    0x5B: "LeftWin",
+    0x5C: "RightWin",
 }
 
 NAME_BY_VK: dict[int, str] = {

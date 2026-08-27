@@ -35,14 +35,20 @@ def test_modifiers_before_plain_keys():
     ) == ("Ctrl", "A", "B")
 
 
-def test_left_right_modifiers_normalized():
-    assert normalize_key("LCtrl") == "Ctrl"
-    assert normalize_key("RShift") == "Shift"
-    assert normalize_key("LAlt") == "Alt"
-    assert normalize_key("RWin") == "Win"
+def test_left_right_modifiers_distinct():
+    # 左右修饰键保留独立（缩写归一到全称，但不合并左右）
+    assert normalize_key("LCtrl") == "LeftCtrl"
+    assert normalize_key("RShift") == "RightShift"
+    assert normalize_key("LAlt") == "LeftAlt"
+    assert normalize_key("RWin") == "RightWin"
 
     assert canonicalize_keys(
         ("LCtrl", "RShift", "A")
+    ) == ("LeftCtrl", "RightShift", "A")
+
+    # 统一名仍合法（表示任意侧，旧配置兼容）
+    assert canonicalize_keys(
+        ("Ctrl", "Shift", "A")
     ) == ("Ctrl", "Shift", "A")
 
 

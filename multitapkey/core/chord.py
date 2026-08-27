@@ -21,28 +21,29 @@ from .key_names import (
 
 MODIFIER_ORDER = (
     "Ctrl",
+    "LeftCtrl",
+    "RightCtrl",
     "Shift",
+    "LeftShift",
+    "RightShift",
     "Alt",
+    "LeftAlt",
+    "RightAlt",
     "Win",
+    "LeftWin",
+    "RightWin",
 )
 
 _NORMALIZE_ALIASES = {
-    "LCtrl": "Ctrl",
-    "RCtrl": "Ctrl",
-    "LeftCtrl": "Ctrl",
-    "RightCtrl": "Ctrl",
-    "LShift": "Shift",
-    "RShift": "Shift",
-    "LeftShift": "Shift",
-    "RightShift": "Shift",
-    "LAlt": "Alt",
-    "RAlt": "Alt",
-    "LeftAlt": "Alt",
-    "RightAlt": "Alt",
-    "LWin": "Win",
-    "RWin": "Win",
-    "LeftWin": "Win",
-    "RightWin": "Win",
+    # 缩写 → 全称（左右保留独立，不再归一为统一名）
+    "LCtrl": "LeftCtrl",
+    "RCtrl": "RightCtrl",
+    "LShift": "LeftShift",
+    "RShift": "RightShift",
+    "LAlt": "LeftAlt",
+    "RAlt": "RightAlt",
+    "LWin": "LeftWin",
+    "RWin": "RightWin",
 }
 
 # 组合数量上限（规格：最多 8 个物理键）

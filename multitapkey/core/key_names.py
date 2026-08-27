@@ -89,6 +89,15 @@ CANONICAL_KEYS = frozenset(
         "Shift",
         "Alt",
         "Win",
+        # 区分左右的修饰键（游戏/专业软件常用）
+        "LeftCtrl",
+        "RightCtrl",
+        "LeftShift",
+        "RightShift",
+        "LeftAlt",
+        "RightAlt",
+        "LeftWin",
+        "RightWin",
     }
 )
 
@@ -98,6 +107,14 @@ MODIFIER_NAMES = frozenset(
         "Shift",
         "Alt",
         "Win",
+        "LeftCtrl",
+        "RightCtrl",
+        "LeftShift",
+        "RightShift",
+        "LeftAlt",
+        "RightAlt",
+        "LeftWin",
+        "RightWin",
     }
 )
 

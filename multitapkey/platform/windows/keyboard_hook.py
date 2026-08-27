@@ -846,6 +846,44 @@ class WindowsKeyboardBackend:
     # Chord helpers
     # ------------------------------------------------------------------
 
+    # 左右修饰键 → 统一名（旧配置 'Ctrl' 等触发键匹配任意侧）
+    _SIDE_TO_BASE = {
+        "LeftCtrl": "Ctrl",
+        "RightCtrl": "Ctrl",
+        "LeftShift": "Shift",
+        "RightShift": "Shift",
+        "LeftAlt": "Alt",
+        "RightAlt": "Alt",
+        "LeftWin": "Win",
+        "RightWin": "Win",
+    }
+
+    @staticmethod
+    def _chord_matches(
+        chord_set: frozenset[str],
+        pressed: frozenset[str],
+    ) -> bool:
+        # 精确匹配优先（触发键显式用了 LeftCtrl 等具体侧名）
+        if chord_set == pressed:
+            return True
+
+        # 兼容：触发键用统一名（'Ctrl'）时，把实际按下的
+        # 左右侧（'LeftCtrl'/'RightCtrl'）归一后比较。
+        if any(
+            key in WindowsKeyboardBackend._SIDE_TO_BASE
+            for key in pressed
+        ):
+            norm = frozenset(
+                WindowsKeyboardBackend._SIDE_TO_BASE.get(
+                    key,
+                    key,
+                )
+                for key in pressed
+            )
+            return set(chord_set) == norm
+
+        return False
+
     def _match_trigger_chord(
         self,
     ) -> tuple[
@@ -860,9 +898,12 @@ class WindowsKeyboardBackend:
             self._triggers
         ):
             if (
-                chord_set == pressed
-                and display
+                display
                 not in self._active
+                and self._chord_matches(
+                    chord_set,
+                    pressed,
+                )
             ):
                 return (
                     display,
@@ -875,27 +916,47 @@ class WindowsKeyboardBackend:
         self,
         released_key: str,
     ) -> None:
+        base = (
+            self._SIDE_TO_BASE.get(
+                released_key,
+                released_key,
+            )
+        )
+
         for display, chord_set in (
             self._triggers
         ):
             if (
                 display in self._active
-                and released_key
-                in chord_set
-                and not chord_set.issubset(
-                    self._pressed
+                and (
+                    base in chord_set
+                    or released_key in chord_set
                 )
             ):
-                self._active.discard(display)
-
-                self.events.put(
-                    RawKeyEvent(
-                        key=display,
-                        is_down=False,
-                        injected=False,
-                        timestamp=time.monotonic(),
+                # pressed 也做左右归一后判断是否仍满足 chord
+                pressed_norm = frozenset(
+                    self._SIDE_TO_BASE.get(
+                        k,
+                        k,
                     )
+                    for k in self._pressed
                 )
+
+                if not set(
+                    chord_set
+                ).issubset(
+                    pressed_norm
+                ):
+                    self._active.discard(display)
+
+                    self.events.put(
+                        RawKeyEvent(
+                            key=display,
+                            is_down=False,
+                            injected=False,
+                            timestamp=time.monotonic(),
+                        )
+                    )
 
     def _drain_capture_results(self) -> None:
         try:

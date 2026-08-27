@@ -487,24 +487,18 @@ def test_default_trigger_example():
 
     binding = config.profiles[0].bindings[0]
 
-    # 出厂示例：触发键 Ctrl+Shift+Alt+Q，1/2/3 击 → Alt+Q / Alt+W / Alt+E
+    # 出厂默认：ScrollLock 触发，2 击 → Ctrl+C（复制），长按 → Ctrl+V（粘贴）
     assert binding.trigger == (
-        "Ctrl",
-        "Shift",
-        "Alt",
-        "Q",
+        "ScrollLock",
     )
 
     taps = dict(
         binding.gestures.taps
     )
 
-    assert taps[1].keys == ("Alt", "Q")
-    assert taps[2].keys == ("Alt", "W")
-    assert taps[3].keys == ("Alt", "E")
-
-    # 长按未设置（默认停用）
-    assert binding.gestures.hold.type == "disabled"
+    assert taps[1].type == "disabled"
+    assert taps[2].keys == ("Ctrl", "C")
+    assert binding.gestures.hold.keys == ("Ctrl", "V")
 
 
 def test_empty_trigger_allowed_as_unset():
