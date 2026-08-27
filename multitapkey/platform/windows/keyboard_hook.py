@@ -36,6 +36,11 @@ WM_SYSKEYDOWN = 0x0104
 WM_SYSKEYUP = 0x0105
 WM_QUIT = 0x0012
 
+# 自定义消息：主线程请求钩子线程重装钩子（钩子被系统静默
+# 移除后的自愈通道）
+WM_USER = 0x0400
+WM_REHOOK = WM_USER + 1
+
 # 鼠标消息
 WM_LBUTTONDOWN = 0x0201
 WM_LBUTTONUP = 0x0202
@@ -163,6 +168,9 @@ class WindowsKeyboardBackend:
         self._mouse_hook = None
         self._mouse_proc = None
 
+        # 回调内错误计数（轻量自增，供外部诊断；不在回调内写日志）
+        self._cb_errors = 0
+
     # ------------------------------------------------------------------
     # Public backend API
     # ------------------------------------------------------------------
@@ -273,6 +281,68 @@ class WindowsKeyboardBackend:
         self._active.clear()
         self._drain_capture_results()
 
+    def rehook(self) -> None:
+        """请求钩子线程重装钩子（自愈：钩子可能被系统静默移除）。
+
+        有按键按住 / 录制中时跳过，避免重装导致状态丢失。
+        """
+        if self._pressed or self._capture_mode:
+            return
+
+        thread_id = self._thread_id
+
+        if thread_id:
+            user32.PostThreadMessageW(
+                thread_id,
+                WM_REHOOK,
+                0,
+                0,
+            )
+
+    def _rehook_in_thread(self) -> None:
+        try:
+            if self._hook:
+                user32.UnhookWindowsHookEx(
+                    self._hook
+                )
+                self._hook = None
+
+            if self._mouse_hook:
+                user32.UnhookWindowsHookEx(
+                    self._mouse_hook
+                )
+                self._mouse_hook = None
+
+            self._hook = user32.SetWindowsHookExW(
+                WH_KEYBOARD_LL,
+                self._proc,
+                None,
+                0,
+            )
+
+            self._mouse_hook = (
+                user32.SetWindowsHookExW(
+                    WH_MOUSE_LL,
+                    self._mouse_proc,
+                    None,
+                    0,
+                )
+            )
+
+            if not (
+                self._hook
+                and self._mouse_hook
+            ):
+                log.warning(
+                    "hook re-install failed; "
+                    "will retry on next cycle"
+                )
+        except Exception:
+            log.warning(
+                "hook re-install error",
+                exc_info=True,
+            )
+
     # ------------------------------------------------------------------
     # Thread / Hook
     # ------------------------------------------------------------------
@@ -341,6 +411,14 @@ class WindowsKeyboardBackend:
                         ctypes.get_last_error() or 1
                     )
                     break
+
+                if (
+                    msg.message == WM_REHOOK
+                ):
+                    # 自愈：钩子可能被系统静默移除（回调超时），
+                    # 重新安装。有按键按住/录制中时跳过，避免状态丢失。
+                    self._rehook_in_thread()
+                    continue
 
         except Exception:
             self.init_error = (
@@ -574,9 +652,10 @@ class WindowsKeyboardBackend:
             )
         except Exception:
             # 任何意外都“放行”，绝不因报错而吞掉按键（失败开放原则）。
-            log.exception(
-                "keyboard hook callback error; passing event through"
-            )
+            # 注意：这里绝不写日志——回调里 log.exception 会产生
+            # traceback（很慢），超过 LowLevelHooksTimeout 会导致
+            # 钩子被系统静默移除（间歇性失效的元凶）。
+            self._cb_errors += 1
             try:
                 return user32.CallNextHookEx(
                     None,
@@ -829,9 +908,8 @@ class WindowsKeyboardBackend:
             )
         except Exception:
             # 任何意外都"放行"，绝不因报错而吞掉鼠标事件（失败开放原则）。
-            log.exception(
-                "mouse hook callback error; passing event through"
-            )
+            # 回调内绝不写日志（同键盘回调：慢日志 → 超时 → 钩子被拔）。
+            self._cb_errors += 1
             try:
                 return user32.CallNextHookEx(
                     None,

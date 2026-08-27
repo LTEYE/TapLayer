@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import time
 from typing import Callable
 
 from multitapkey.platform.base import (
@@ -92,6 +93,8 @@ class Engine:
         self._profile_name = "default"
 
         self._backend_started = False
+        # 钩子自愈检查计时（每 60 秒请求重装一次，防系统静默拔钩）
+        self._last_rehook_check = 0.0
         self._config_loaded = False
         self._paused = False
         self._active = False
@@ -407,6 +410,28 @@ class Engine:
 
         for machine in self._machines.values():
             machine.check_timeouts()
+
+        # 钩子自愈：Windows 可能因回调超时静默移除低层钩子
+        # （间歇性失效），定期请求重装。有按键按住时 backend 会跳过。
+        now = time.monotonic()
+
+        if (
+            now - self._last_rehook_check
+            >= 60.0
+        ):
+            self._last_rehook_check = now
+
+            rehook = getattr(
+                self.backend,
+                "rehook",
+                None,
+            )
+
+            if rehook is not None:
+                try:
+                    rehook()
+                except Exception:
+                    pass
 
     def _drain_queue(self) -> None:
         try:
