@@ -319,12 +319,15 @@ class MainWindow(QMainWindow):
         config: Config | None,
         config_error: bool,
         startup_backend,
+        input_backend=None,
     ) -> None:
         super().__init__()
 
         self.engine = engine
         self.i18n = i18n
         self.startup_backend = startup_backend
+        # 输出后端路由（RoutingInputBackend；旧调用方不传则为 None）
+        self._input_backend = input_backend
 
         self.force_exit = False
         self._config_valid = (
@@ -507,6 +510,40 @@ class MainWindow(QMainWindow):
         )
         top_bar.addWidget(
             self._add_profile_button
+        )
+
+        # 输出后端（随当前配置档生效；即时提交）
+        self._output_backend_label = QLabel(
+            self.i18n.tr(
+                "output_backend.label"
+            )
+        )
+        top_bar.addWidget(
+            self._output_backend_label
+        )
+
+        self.outputBackendCombo = QComboBox()
+        self.outputBackendCombo.setObjectName(
+            "outputBackendCombo"
+        )
+        self.outputBackendCombo.addItem(
+            self.i18n.tr("output_backend.sendinput"),
+            userData="sendinput",
+        )
+        self.outputBackendCombo.addItem(
+            self.i18n.tr("output_backend.interception"),
+            userData="interception",
+        )
+        self.outputBackendCombo.setToolTip(
+            self.i18n.tr(
+                "output_backend.tooltip"
+            )
+        )
+        self.outputBackendCombo.currentIndexChanged.connect(
+            self._on_output_backend_changed
+        )
+        top_bar.addWidget(
+            self.outputBackendCombo
         )
 
         top_bar.addWidget(
@@ -2004,6 +2041,67 @@ class MainWindow(QMainWindow):
             )
         )
 
+    def _on_output_backend_changed(
+        self,
+        index: int,
+    ) -> None:
+        if (
+            self._loading_ui
+            or not self._config_valid
+        ):
+            return
+
+        value = self.outputBackendCombo.currentData()
+
+        if not value:
+            return
+
+        profile = self._working_profile()
+
+        if (
+            profile.get("output_backend")
+            or "sendinput"
+        ) == value:
+            return
+
+        profile["output_backend"] = value
+
+        try:
+            new_config = validate_and_build(
+                self._working
+            )
+        except ConfigError:
+            log.exception(
+                "output_backend commit failed"
+            )
+            return
+
+        self._commit_config(new_config)
+
+        # 这里只做结果提示；下拉框回显由 _commit_config 里的
+        # _refresh_binding_list 统一完成
+        router = self._input_backend
+
+        if router is None:
+            return
+
+        if value == "interception":
+            if (
+                router.active_backend_name
+                == "interception"
+            ):
+                self._show_toast(
+                    self.i18n.tr(
+                        "output_backend.active_driver"
+                    )
+                )
+            else:
+                self._show_toast(
+                    self.i18n.tr(
+                        "output_backend.unavailable"
+                    )
+                )
+
     # ------------------------------------------------------------------
     # Binding list
     # ------------------------------------------------------------------
@@ -2018,6 +2116,26 @@ class MainWindow(QMainWindow):
         self.bindingList.clear()
 
         profile = self._working_profile()
+
+        # 同步"输出后端"下拉框到当前配置档（屏蔽信号防误提交）
+        backend_value = (
+            profile.get("output_backend")
+            or "sendinput"
+        )
+        self.outputBackendCombo.blockSignals(
+            True
+        )
+        try:
+            idx = self.outputBackendCombo.findData(
+                backend_value
+            )
+            self.outputBackendCombo.setCurrentIndex(
+                max(idx, 0)
+            )
+        finally:
+            self.outputBackendCombo.blockSignals(
+                False
+            )
 
         for binding in profile[
             "bindings"
@@ -4657,6 +4775,34 @@ class MainWindow(QMainWindow):
                     "profile.label"
                 )
             )
+
+        if (
+            self._output_backend_label
+            is not None
+        ):
+            self._output_backend_label.setText(
+                self.i18n.tr(
+                    "output_backend.label"
+                )
+            )
+
+        self.outputBackendCombo.setItemText(
+            0,
+            self.i18n.tr(
+                "output_backend.sendinput"
+            ),
+        )
+        self.outputBackendCombo.setItemText(
+            1,
+            self.i18n.tr(
+                "output_backend.interception"
+            ),
+        )
+        self.outputBackendCombo.setToolTip(
+            self.i18n.tr(
+                "output_backend.tooltip"
+            )
+        )
 
         for key, button in (
             self._tr_buttons.items()

@@ -53,6 +53,8 @@ WM_XBUTTONUP = 0x020C
 
 HC_ACTION = 0
 LLKHF_INJECTED = 0x00000010
+LLKHF_EXTENDED = 0x00000001
+LLKHF_UP = 0x00000080
 
 # 捕获模式最多持续这么久；超时自动取消，避免界面卡住时永久吞掉所有按键。
 CAPTURE_TIMEOUT_S = 30.0
@@ -129,9 +131,15 @@ kernel32.GetCurrentThreadId.restype = wt.DWORD
 
 
 class WindowsKeyboardBackend:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        output_echo=None,
+    ) -> None:
         self.events: queue.SimpleQueue = queue.SimpleQueue()
         self.init_error: int | None = None
+
+        # 驱动级输出回声登记（无标记输出的自识别）；测试可不传
+        self._output_echo = output_echo
 
         self._trigger_chords: frozenset[
             tuple[str, ...]
@@ -494,6 +502,24 @@ class WindowsKeyboardBackend:
             if (
                 info.dwExtraInfo == INJECTED_MARKER
                 or info.flags & LLKHF_INJECTED
+            ):
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
+            # 1.5 驱动级输出回声：驱动输出不带任何软件标记（与物理键
+            # 一致，目标应用无法过滤），这里按"近期输出登记"认领，
+            # 防止自己的输出再次进入识别状态机（防反馈环）。
+            if (
+                self._output_echo is not None
+                and self._output_echo.claim(
+                    int(info.scanCode),
+                    bool(info.flags & LLKHF_EXTENDED),
+                    bool(info.flags & LLKHF_UP),
+                )
             ):
                 return user32.CallNextHookEx(
                     None,

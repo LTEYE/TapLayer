@@ -203,5 +203,11 @@
   "binding.delete.message": "Delete binding \"{trigger}\"?",
   "binding.delete.confirm": "Delete",
   "config.version_incompatible.title": "Configuration Version Incompatible",
-  "config.version_incompatible.message": "An old or unsupported configuration file was found. TapLayer will create a new default configuration — please reconfigure. The old configuration is not converted."
+  "config.version_incompatible.message": "An old or unsupported configuration file was found. TapLayer will create a new default configuration — please reconfigure. The old configuration is not converted.",
+  "output_backend.label": "Output",
+  "output_backend.sendinput": "Standard",
+  "output_backend.interception": "Driver-level (experimental)",
+  "output_backend.tooltip": "Standard: regular system injection.\nDriver-level: injects via the Interception driver and bypasses filters on simulated keys (driver must be installed; do not enable under kernel-level anti-cheat).",
+  "output_backend.active_driver": "Driver-level output enabled",
+  "output_backend.unavailable": "Driver-level output unavailable (driver not installed); fell back to standard output"
 }

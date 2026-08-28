@@ -35,6 +35,13 @@ from multitapkey.logging_setup import (
 from multitapkey.platform.windows.keyboard_hook import (
     WindowsKeyboardBackend,
 )
+from multitapkey.platform.windows.interception_backend import (
+    InterceptionBackend,
+    RoutingInputBackend,
+)
+from multitapkey.platform.windows.output_echo import (
+    OutputEcho,
+)
 from multitapkey.platform.windows.send_input import (
     WindowsInputBackend,
 )
@@ -209,12 +216,19 @@ def main() -> int:
         save_config(config)
         config_error = False
 
+    output_echo = OutputEcho()
+
     keyboard_backend = (
-        WindowsKeyboardBackend()
+        WindowsKeyboardBackend(
+            output_echo=output_echo
+        )
     )
 
-    input_backend = (
-        WindowsInputBackend()
+    input_backend = RoutingInputBackend(
+        primary=WindowsInputBackend(),
+        driver=InterceptionBackend(
+            output_echo=output_echo
+        ),
     )
 
     startup_backend = (
@@ -232,6 +246,7 @@ def main() -> int:
         config=config,
         config_error=config_error,
         startup_backend=startup_backend,
+        input_backend=input_backend,
     )
 
     tray = TrayController(

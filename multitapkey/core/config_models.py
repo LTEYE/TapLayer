@@ -81,6 +81,11 @@ SETTINGS_FIELDS = {
     # 更新（v2.2+）：启动自动检查 / 自动下载安装
     "auto_check_update",
     "auto_update",
+    # 实验：驱动级输出不带 cookie 标记（dwExtraInfo=0）。
+    # 用于验证按 dwExtraInfo 过滤模拟键的目标应用（如豆包 IME）。
+    # 注意：此时 TapLayer 自身钩子不再认领驱动输出，输出键与触发键
+    # 有重叠的配置会形成自触发循环——仅实验时开启。
+    "driver_output_cookieless",
 }
 
 THEMES = {
@@ -176,6 +181,8 @@ class Binding:
 class Profile:
     name: str
     bindings: tuple[Binding, ...] = ()
+    # 输出后端：sendinput=标准注入；interception=驱动级注入（需已装 Interception）
+    output_backend: str = "sendinput"
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +196,8 @@ class Settings:
     # 更新（v2.2+）：启动自动检查 / 自动下载安装
     auto_check_update: bool = False
     auto_update: bool = False
+    # 实验：驱动级输出不带 cookie 标记（默认关闭，见 SETTINGS_FIELDS 注释）
+    driver_output_cookieless: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -643,7 +652,7 @@ def _validate_profile(
 
     _require_exact_keys(
         obj,
-        {"bindings"},
+        {"bindings", "output_backend"},
     )
 
     raw_bindings = _require_list(
@@ -679,9 +688,25 @@ def _validate_profile(
 
         bindings.append(binding)
 
+    # 输出后端：未知值不拒绝（拒绝会让旧配置整个加载失败），钳到默认并警告
+    output_backend = obj.get("output_backend", "sendinput")
+
+    if output_backend is None:
+        output_backend = "sendinput"
+
+    if output_backend not in ("sendinput", "interception"):
+        log.warning(
+            "profile %s: unknown output_backend %r; "
+            "falling back to sendinput",
+            name,
+            output_backend,
+        )
+        output_backend = "sendinput"
+
     return Profile(
         name=name,
         bindings=tuple(bindings),
+        output_backend=output_backend,
     )
 
 
@@ -756,6 +781,22 @@ def validate_and_build(
 
     if auto_update is None:
         auto_update = False
+
+    # 实验字段：旧配置没有时默认关闭；类型错误不拒绝整个配置
+    driver_output_cookieless = settings_obj.get(
+        "driver_output_cookieless"
+    )
+
+    if driver_output_cookieless is None:
+        driver_output_cookieless = False
+
+    if type(driver_output_cookieless) is not bool:
+        log.warning(
+            "settings.driver_output_cookieless "
+            "must be bool; got %r, using False",
+            driver_output_cookieless,
+        )
+        driver_output_cookieless = False
 
     if type(double_tap) is not int:
         raise ConfigError(
@@ -874,6 +915,7 @@ def validate_and_build(
             theme=theme,
             auto_check_update=auto_check_update,
             auto_update=auto_update,
+            driver_output_cookieless=driver_output_cookieless,
         ),
         profiles=profiles,
     )
@@ -1149,9 +1191,13 @@ def to_dict(
             "auto_update": (
                 config.settings.auto_update
             ),
+            "driver_output_cookieless": (
+                config.settings.driver_output_cookieless
+            ),
         },
         "profiles": {
             profile.name: {
+                "output_backend": profile.output_backend,
                 "bindings": [
                     _binding_to_dict(binding)
                     for binding in profile.bindings

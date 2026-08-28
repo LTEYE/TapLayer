@@ -105,6 +105,9 @@ class Engine:
     ) -> None:
         self.backend = keyboard_backend
 
+        # 保留引用：支持按配置档选择输出后端（duck-typed，可选能力）
+        self._input_backend = input_backend
+
         self._dispatcher = ActionDispatcher(
             chord=input_backend.tap_chord,
             hold_until=(
@@ -261,6 +264,16 @@ class Engine:
             config,
             name,
         )
+
+        # 输出后端按配置档选择（RoutingInputBackend 等支持时生效）
+        select_backend = getattr(
+            self._input_backend,
+            "select_output_backend",
+            None,
+        )
+
+        if select_backend is not None:
+            select_backend(profile)
 
         interval = (
             config.settings.double_tap_interval_ms

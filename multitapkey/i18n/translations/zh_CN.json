@@ -203,5 +203,11 @@
   "binding.delete.message": "确定要删除绑定 \"{trigger}\" 吗？",
   "binding.delete.confirm": "删除",
   "config.version_incompatible.title": "配置版本不兼容",
-  "config.version_incompatible.message": "检测到旧版本或不支持的配置文件。TapLayer 将创建新的默认配置，请重新配置。旧配置不会被转换。"
+  "config.version_incompatible.message": "检测到旧版本或不支持的配置文件。TapLayer 将创建新的默认配置，请重新配置。旧配置不会被转换。",
+  "output_backend.label": "输出后端",
+  "output_backend.sendinput": "标准",
+  "output_backend.interception": "驱动级（实验）",
+  "output_backend.tooltip": "标准：常规系统注入。\n驱动级：通过 Interception 驱动注入，可绕过对模拟按键的过滤（需已安装驱动；部分内核级反作弊环境请勿启用）。",
+  "output_backend.active_driver": "已启用驱动级输出",
+  "output_backend.unavailable": "驱动级输出不可用（未安装驱动），已回退标准输出"
 }
