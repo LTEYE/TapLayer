@@ -8,6 +8,7 @@ the gesture is unbound. Old v1 configuration files are NOT migrated.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,6 +20,9 @@ from .chord import (
 from .key_names import (
     is_valid_key_name,
 )
+
+
+log = logging.getLogger(__name__)
 
 CONFIG_VERSION = 2
 
@@ -36,11 +40,22 @@ SUPPORTED_LANGUAGES = (
 
 MAX_TAP_COUNT = 9
 
+# 时间参数的最小值（2026-08-28 修复：滑杆/配置可被调到极端值，
+# 导致"单击变长按""双击被吞"等识别混乱；超范围值在加载时钳制）。
+MIN_DOUBLE_TAP_INTERVAL_MS = 200
+MIN_HOLD_THRESHOLD_MS = 300
+MAX_DOUBLE_TAP_INTERVAL_MS = 1000
+MAX_HOLD_THRESHOLD_MS = 5000
+
 ACTION_FIELDS = {
     "type",
     "keys",
     "interval_ms",
     "hold_ms",
+    # 输出行为（v2.1+）：缺省 = 点一下；长按手势缺省 = 按住 1 秒
+    "output_mode",
+    "repeat",
+    "output_hold_ms",
 }
 
 GESTURE_FIELDS = {
@@ -52,6 +67,8 @@ BINDING_FIELDS = {
     "trigger",
     "enabled",
     "gestures",
+    # 绑定自定义名（v2.1+）：弹窗/卡片显示用，空 = 默认显示触发键
+    "name",
 }
 
 SETTINGS_FIELDS = {
@@ -61,6 +78,9 @@ SETTINGS_FIELDS = {
     "language",
     "enable_gesture_overlay",
     "theme",
+    # 更新（v2.2+）：启动自动检查 / 自动下载安装
+    "auto_check_update",
+    "auto_update",
 }
 
 THEMES = {
@@ -97,6 +117,15 @@ class ActionSpec:
     # 触发参数（None = 使用全局值，旧配置向后兼容）：
     interval_ms: int | None = None  # 连击窗口：多少毫秒内按出下一击
     hold_ms: int | None = None  # 长按触发时间（仅 hold 手势使用）
+    # 输出行为（v2.1+；None = 未显式设置）：
+    #   tap                点一下（默认）
+    #   repeat             触发后连点 N 下
+    #   hold               按住 output_hold_ms 毫秒再松开
+    #   hold_until_release 按住直到松开触发键
+    # 长按手势在 output_mode 未设置时自动按 hold(1 秒) 处理。
+    output_mode: str | None = None
+    repeat: int = 1  # repeat 模式：连点次数
+    output_hold_ms: int | None = None  # hold 模式：按住毫秒数（None = 默认 1000）
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,11 +155,20 @@ class Binding:
     trigger: tuple[str, ...]
     enabled: bool
     gestures: GestureSpec
+    # 自定义名（可空）：输出弹窗/绑定卡片显示用；空则回退触发键
+    name: str = ""
 
     @property
     def trigger_display(self) -> str:
         return chord_display(
             self.trigger
+        )
+
+    @property
+    def display_name(self) -> str:
+        return (
+            self.name
+            or self.trigger_display
         )
 
 
@@ -148,6 +186,9 @@ class Settings:
     language: str = "system"
     enable_gesture_overlay: bool = False
     theme: str = "system"
+    # 更新（v2.2+）：启动自动检查 / 自动下载安装
+    auto_check_update: bool = False
+    auto_update: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,10 +260,22 @@ def _parse_optional_int(
         )
 
     if not lo <= value <= hi:
-        raise ConfigError(
-            "invalid_range",
-            field=field,
+        # 超范围值不再拒绝（拒绝会让旧配置整个加载失败），
+        # 而是钳制到边界并警告——识别参数必须落在合理区间，
+        # 否则"单击变长按/双击被吞"会反复出现。
+        clamped = max(lo, min(hi, value))
+
+        log.warning(
+            "config field %s=%s out of range [%s, %s]; "
+            "clamped to %s",
+            field,
+            value,
+            lo,
+            hi,
+            clamped,
         )
+
+        return clamped
 
     return value
 
@@ -307,14 +360,49 @@ def _validate_action(
     interval_ms = _parse_optional_int(
         obj,
         "interval_ms",
-        50,
-        1000,
+        MIN_DOUBLE_TAP_INTERVAL_MS,
+        MAX_DOUBLE_TAP_INTERVAL_MS,
     )
     hold_ms = _parse_optional_int(
         obj,
         "hold_ms",
-        100,
-        5000,
+        MIN_HOLD_THRESHOLD_MS,
+        MAX_HOLD_THRESHOLD_MS,
+    )
+
+    # v2.1+：输出行为（缺省 None = 未显式设置）
+    output_mode = obj.get("output_mode")
+
+    if (
+        output_mode is not None
+        and output_mode
+        not in {
+            "tap",
+            "repeat",
+            "hold",
+            "hold_until_release",
+        }
+    ):
+        raise ConfigError(
+            "invalid_type",
+            field="action.output_mode",
+            expected=(
+                "tap|repeat|hold|hold_until_release"
+            ),
+        )
+
+    repeat = _parse_optional_int(
+        obj,
+        "repeat",
+        1,
+        99,
+    )
+
+    output_hold_ms = _parse_optional_int(
+        obj,
+        "output_hold_ms",
+        50,
+        60000,
     )
 
     return ActionSpec(
@@ -322,6 +410,13 @@ def _validate_action(
         keys=canonical,
         interval_ms=interval_ms,
         hold_ms=hold_ms,
+        output_mode=output_mode,
+        repeat=(
+            repeat
+            if repeat is not None
+            else 1
+        ),
+        output_hold_ms=output_hold_ms,
     )
 
 
@@ -495,10 +590,36 @@ def _validate_binding(
         obj.get("gestures")
     )
 
+    name = obj.get(
+        "name",
+        "",
+    )
+
+    if name is None:
+        name = ""
+
+    if not isinstance(
+        name,
+        str,
+    ):
+        raise ConfigError(
+            "invalid_type",
+            field="binding.name",
+            expected="string",
+        )
+
+    if len(name) > 60:
+        raise ConfigError(
+            "invalid_type",
+            field="binding.name",
+            expected="<=60 chars",
+        )
+
     return Binding(
         trigger=trigger,
         enabled=enabled,
         gestures=gestures,
+        name=name.strip(),
     )
 
 
@@ -618,10 +739,23 @@ def validate_and_build(
     theme = settings_obj.get(
         "theme"
     )
+    # v2.2+：更新设置；旧配置没有时默认关闭
+    auto_check_update = settings_obj.get(
+        "auto_check_update"
+    )
+    auto_update = settings_obj.get(
+        "auto_update"
+    )
 
     if theme is None:
         # 旧配置没有 theme 字段：默认 system，向后兼容
         theme = "system"
+
+    if auto_check_update is None:
+        auto_check_update = False
+
+    if auto_update is None:
+        auto_update = False
 
     if type(double_tap) is not int:
         raise ConfigError(
@@ -630,10 +764,17 @@ def validate_and_build(
             expected="int",
         )
 
-    if not 50 <= double_tap <= 1000:
-        raise ConfigError(
-            "invalid_range",
-            field="double_tap_interval_ms",
+    if double_tap < MIN_DOUBLE_TAP_INTERVAL_MS or (
+        double_tap > MAX_DOUBLE_TAP_INTERVAL_MS
+    ):
+        double_tap = max(
+            MIN_DOUBLE_TAP_INTERVAL_MS,
+            min(MAX_DOUBLE_TAP_INTERVAL_MS, double_tap),
+        )
+
+        log.warning(
+            "double_tap_interval_ms clamped to %s",
+            double_tap,
         )
 
     if type(hold_threshold) is not int:
@@ -643,10 +784,17 @@ def validate_and_build(
             expected="int",
         )
 
-    if not 100 <= hold_threshold <= 5000:
-        raise ConfigError(
-            "invalid_range",
-            field="hold_threshold_ms",
+    if hold_threshold < MIN_HOLD_THRESHOLD_MS or (
+        hold_threshold > MAX_HOLD_THRESHOLD_MS
+    ):
+        hold_threshold = max(
+            MIN_HOLD_THRESHOLD_MS,
+            min(MAX_HOLD_THRESHOLD_MS, hold_threshold),
+        )
+
+        log.warning(
+            "hold_threshold_ms clamped to %s",
+            hold_threshold,
         )
 
     if type(start_with_windows) is not bool:
@@ -666,6 +814,20 @@ def validate_and_build(
         raise ConfigError(
             "invalid_type",
             field="enable_gesture_overlay",
+            expected="bool",
+        )
+
+    if type(auto_check_update) is not bool:
+        raise ConfigError(
+            "invalid_type",
+            field="auto_check_update",
+            expected="bool",
+        )
+
+    if type(auto_update) is not bool:
+        raise ConfigError(
+            "invalid_type",
+            field="auto_update",
             expected="bool",
         )
 
@@ -710,6 +872,8 @@ def validate_and_build(
             language=language,
             enable_gesture_overlay=enable_overlay,
             theme=theme,
+            auto_check_update=auto_check_update,
+            auto_update=auto_update,
         ),
         profiles=profiles,
     )
@@ -895,6 +1059,27 @@ def _action_to_dict(
             action.hold_ms
         )
 
+    if action.output_mode is not None:
+        data["output_mode"] = (
+            action.output_mode
+        )
+
+        if (
+            action.output_mode == "repeat"
+            and action.repeat > 1
+        ):
+            data["repeat"] = (
+                action.repeat
+            )
+
+        if (
+            action.output_mode == "hold"
+            and action.output_hold_ms is not None
+        ):
+            data["output_hold_ms"] = (
+                action.output_hold_ms
+            )
+
     return data
 
 
@@ -919,7 +1104,7 @@ def _gestures_to_dict(
 def _binding_to_dict(
     binding: Binding,
 ) -> dict[str, Any]:
-    return {
+    data: dict[str, Any] = {
         "trigger": _action_to_dict(
             ActionSpec(
                 type="chord",
@@ -931,6 +1116,11 @@ def _binding_to_dict(
             binding.gestures
         ),
     }
+
+    if binding.name:
+        data["name"] = binding.name
+
+    return data
 
 
 def to_dict(
@@ -953,6 +1143,12 @@ def to_dict(
                 config.settings.enable_gesture_overlay
             ),
             "theme": config.settings.theme,
+            "auto_check_update": (
+                config.settings.auto_check_update
+            ),
+            "auto_update": (
+                config.settings.auto_update
+            ),
         },
         "profiles": {
             profile.name: {

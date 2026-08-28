@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
+import threading
+import webbrowser
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -36,6 +39,8 @@ from multitapkey.core.chord import (
 )
 from multitapkey.core.config_models import (
     MAX_TAP_COUNT,
+    MIN_DOUBLE_TAP_INTERVAL_MS,
+    MIN_HOLD_THRESHOLD_MS,
     PROFILE_NAMES,
     Config,
     ConfigError,
@@ -246,6 +251,66 @@ def _system_dark_mode() -> bool:
         return False
 
 
+class _UpdateCheckWorker(QObject):
+    """后台检查更新（网络请求不阻塞 UI 线程）。"""
+
+    finished = Signal(
+        bool,
+        str,
+        str,
+        str,
+    )  # ok, latest_version, exe_download_url, release_page_url
+
+    def run(self) -> None:
+        from multitapkey.core.updater import (
+            check_for_update,
+        )
+
+        ok, latest, exe_url, page_url = (
+            check_for_update()
+        )
+        self.finished.emit(
+            ok,
+            latest,
+            exe_url,
+            page_url,
+        )
+
+
+class _UpdateDownloadWorker(QObject):
+    """后台下载最新版 exe（网络请求不阻塞 UI 线程）。"""
+
+    finished = Signal(bool)  # 是否下载成功
+
+    def __init__(
+        self,
+        url: str,
+        dest_path: str,
+    ) -> None:
+        super().__init__()
+        self._url = url
+        self._dest = dest_path
+
+    def run(self) -> None:
+        from multitapkey.core.updater import (
+            download_update,
+        )
+
+        try:
+            download_update(
+                self._url,
+                self._dest,
+            )
+        except Exception:
+            log.exception(
+                "update download failed"
+            )
+            self.finished.emit(False)
+            return
+
+        self.finished.emit(True)
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -279,6 +344,10 @@ class MainWindow(QMainWindow):
         self._saved = copy.deepcopy(
             self._working
         )
+
+        # 界面加载/重建守卫：构建控件期间产生的信号不视为用户改动
+        # （否则启动时会把控件默认状态污染进工作副本，误报"未保存"）
+        self._loading_ui = False
 
         self._current_binding_index: int | None = None
 
@@ -328,8 +397,14 @@ class MainWindow(QMainWindow):
             self._config.settings.enable_gesture_overlay
         )
 
+        # v2.2+：自动更新——已下载待安装的新版 exe 路径（None=无）
+        self._pending_update_path: str | None = None
+
         # 首次启动引导（触发键机制说明 + 高亮引导设置）
         self._show_onboarding_if_needed()
+
+        # 启动自动检查更新（设置开启时后台执行，不阻塞界面）
+        self._maybe_auto_check_update()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -677,7 +752,7 @@ class MainWindow(QMainWindow):
             "spinDoubleTap"
         )
         self.spinDoubleTap.setRange(
-            50,
+            MIN_DOUBLE_TAP_INTERVAL_MS,
             1000,
         )
         self.spinDoubleTap.setSingleStep(
@@ -692,7 +767,7 @@ class MainWindow(QMainWindow):
             "spinHold"
         )
         self.spinHold.setRange(
-            100,
+            MIN_HOLD_THRESHOLD_MS,
             5000,
         )
         self.spinHold.setSingleStep(
@@ -764,6 +839,17 @@ class MainWindow(QMainWindow):
             self._settings_changed
         )
 
+        # v2.2+：更新设置（样式与上方勾选框一致）
+        self.autoCheckUpdate = QCheckBox()
+        self.autoCheckUpdate.stateChanged.connect(
+            self._settings_changed
+        )
+
+        self.autoUpdate = QCheckBox()
+        self.autoUpdate.stateChanged.connect(
+            self._settings_changed
+        )
+
         self._settings_form.addRow(
             self.i18n.tr(
                 "settings.double_tap"
@@ -806,6 +892,62 @@ class MainWindow(QMainWindow):
             self.overlayCheck,
         )
 
+        self._settings_form.addRow(
+            self.i18n.tr(
+                "settings.auto_check_update"
+            ),
+            self.autoCheckUpdate,
+        )
+
+        self._settings_form.addRow(
+            self.i18n.tr(
+                "settings.auto_update"
+            ),
+            self.autoUpdate,
+        )
+
+        self.update_button = QPushButton(
+            self.i18n.tr(
+                "settings.update"
+            )
+        )
+        self.update_button.clicked.connect(
+            self._check_update
+        )
+
+        self.update_status = QLabel("")
+        self.update_status.setObjectName(
+            "gestureParam"
+        )
+
+        update_row = QWidget()
+        update_layout = QHBoxLayout(
+            update_row
+        )
+        update_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+        update_layout.setSpacing(
+            8
+        )
+        update_layout.addWidget(
+            self.update_button
+        )
+        update_layout.addWidget(
+            self.update_status,
+            1,
+        )
+
+        self._settings_form.addRow(
+            self.i18n.tr(
+                "settings.update_label"
+            ),
+            update_row,
+        )
+
         main_layout.addWidget(
             settings
         )
@@ -817,7 +959,8 @@ class MainWindow(QMainWindow):
     def show_and_activate(
         self,
     ) -> None:
-        self.show()
+        # showNormal：从托盘恢复时明确取消最小化状态
+        self.showNormal()
         self.raise_()
         self.activateWindow()
 
@@ -1471,6 +1614,49 @@ class MainWindow(QMainWindow):
     ) -> bool:
         return self._working != self._saved
 
+    def save_if_dirty(self) -> None:
+        """退出前自动保存未应用更改（静默；失败仅记日志）。
+
+        修复：以前只有点"应用"才落盘，改了设置直接退出/托盘退出
+        会导致下次启动回到旧配置。进程退出前兜底保存一次。
+        """
+        if not self._config_valid:
+            return
+
+        if not self._is_dirty():
+            return
+
+        self._sync_controls_to_working()
+
+        try:
+            new_config = validate_and_build(
+                self._working
+            )
+        except ConfigError as exc:
+            log.warning(
+                "unsaved config invalid on exit; discarded: %s",
+                exc,
+            )
+            return
+
+        try:
+            save_config(new_config)
+        except Exception:
+            log.exception(
+                "failed to auto-save config on exit"
+            )
+            return
+
+        self._config = new_config
+        self._config_valid = True
+        self._working = copy.deepcopy(
+            to_dict(new_config)
+        )
+        self._saved = copy.deepcopy(
+            self._working
+        )
+        self._editor_dirty = False
+
     def _sync_controls_to_working(
         self,
     ) -> None:
@@ -1496,13 +1682,20 @@ class MainWindow(QMainWindow):
             self._working
         )
 
-        self._rebuild_profile_combo(
-            current_profile=current
-        )
+        # 构建控件期间屏蔽"用户改动"信号，防止把控件默认状态
+        # 污染进工作副本（否则启动即误报"有未保存修改"）。
+        self._loading_ui = True
 
-        self._refresh_binding_list()
+        try:
+            self._rebuild_profile_combo(
+                current_profile=current
+            )
 
-        self._load_settings()
+            self._refresh_binding_list()
+
+            self._load_settings()
+        finally:
+            self._loading_ui = False
 
     # ------------------------------------------------------------------
     # Profiles
@@ -1908,15 +2101,44 @@ class MainWindow(QMainWindow):
         )
 
         name_label = QLabel(
-            trigger
+            (
+                binding.get(
+                    "name",
+                    "",
+                )
+                or trigger
+            )
         )
         name_label.setObjectName(
             "bindingCardName"
+        )
+        name_label.setToolTip(
+            trigger
         )
         head.addWidget(
             name_label
         )
         head.addStretch()
+
+        rename_button = QPushButton(
+            self.i18n.tr(
+                "binding.rename"
+            )
+        )
+        # 自适应宽度：最小 80px，文字（改名/Rename）多长按钮多宽
+        rename_button.setMinimumWidth(
+            80
+        )
+        rename_button.clicked.connect(
+            lambda _checked=False,
+            b=binding:
+            self._rename_binding(
+                b
+            )
+        )
+        head.addWidget(
+            rename_button
+        )
 
         enabled_check = QCheckBox()
         enabled_check.setChecked(
@@ -2001,6 +2223,43 @@ class MainWindow(QMainWindow):
         )
 
         self._mark_editor_changed()
+
+    def _rename_binding(
+        self,
+        binding: dict,
+    ) -> None:
+        from PySide6.QtWidgets import (
+            QInputDialog,
+        )
+
+        text, ok = QInputDialog.getText(
+            self,
+            self.i18n.tr(
+                "binding.rename_title"
+            ),
+            self.i18n.tr(
+                "binding.rename_prompt"
+            ),
+            text=(
+                binding.get(
+                    "name",
+                    "",
+                )
+                or ""
+            ),
+        )
+
+        if not ok:
+            return
+
+        binding["name"] = (
+            text.strip()
+        )
+
+        self._mark_editor_changed()
+
+        # 重建卡片显示新名字（保留当前选中行）
+        self._refresh_binding_list()
 
     def _update_binding_row(
         self,
@@ -2472,7 +2731,7 @@ class MainWindow(QMainWindow):
                 )
             )
             param_spin.setRange(
-                100,
+                MIN_HOLD_THRESHOLD_MS,
                 5000,
             )
         else:
@@ -2484,7 +2743,7 @@ class MainWindow(QMainWindow):
                 )
             )
             param_spin.setRange(
-                50,
+                MIN_DOUBLE_TAP_INTERVAL_MS,
                 1000,
             )
 
@@ -2524,6 +2783,167 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(
             param_row
+        )
+
+        # 输出行为（v2.1+）：点一下 / 连点 N 下 / 按住 N 毫秒 /
+        # 按住直到松开。选"默认"不写字段（tap 手势=点一下，
+        # 长按手势=按住 1 秒）。
+        output_row = QHBoxLayout()
+
+        output_label = QLabel(
+            self.i18n.tr(
+                "binding.output_label"
+            )
+        )
+        output_label.setObjectName(
+            "gestureParam"
+        )
+        output_row.addWidget(
+            output_label
+        )
+
+        output_combo = QComboBox()
+        output_combo.addItem(
+            self.i18n.tr(
+                "binding.output_default"
+            ),
+            "default",
+        )
+        output_combo.addItem(
+            self.i18n.tr(
+                "binding.output_tap"
+            ),
+            "tap",
+        )
+        output_combo.addItem(
+            self.i18n.tr(
+                "binding.output_repeat"
+            ),
+            "repeat",
+        )
+        output_combo.addItem(
+            self.i18n.tr(
+                "binding.output_hold"
+            ),
+            "hold",
+        )
+        output_combo.addItem(
+            self.i18n.tr(
+                "binding.output_hold_until"
+            ),
+            "hold_until_release",
+        )
+
+        repeat_spin = QSpinBox()
+        repeat_spin.setRange(
+            2,
+            9,
+        )
+        repeat_spin.setValue(
+            2
+        )
+        repeat_spin.setSuffix(
+            self.i18n.tr(
+                "binding.output_times"
+            )
+        )
+
+        hold_output_spin = QSpinBox()
+        hold_output_spin.setRange(
+            100,
+            60000,
+        )
+        hold_output_spin.setValue(
+            1000
+        )
+        hold_output_spin.setSingleStep(
+            100
+        )
+        hold_output_spin.setSuffix(
+            self.i18n.tr(
+                "unit.ms"
+            )
+        )
+
+        output_row.addWidget(
+            output_combo
+        )
+        output_row.addWidget(
+            repeat_spin
+        )
+        output_row.addWidget(
+            hold_output_spin
+        )
+        output_row.addStretch()
+
+        layout.addLayout(
+            output_row
+        )
+
+        def _sync_output_controls(
+            index,
+            combo=output_combo,
+            rspin=repeat_spin,
+            hspin=hold_output_spin,
+        ) -> None:
+            mode = combo.itemData(
+                index
+            )
+            rspin.setVisible(
+                mode == "repeat"
+            )
+            hspin.setVisible(
+                mode == "hold"
+            )
+
+        output_combo.currentIndexChanged.connect(
+            _sync_output_controls
+        )
+        output_combo.currentIndexChanged.connect(
+            self._mark_editor_changed
+        )
+        repeat_spin.valueChanged.connect(
+            self._mark_editor_changed
+        )
+        hold_output_spin.valueChanged.connect(
+            self._mark_editor_changed
+        )
+
+        # 从配置恢复输出行为
+        output_mode = action.get(
+            "output_mode"
+        )
+
+        output_combo.setCurrentIndex(
+            {
+                None: 0,
+                "tap": 1,
+                "repeat": 2,
+                "hold": 3,
+                "hold_until_release": 4,
+            }.get(
+                output_mode,
+                0,
+            )
+        )
+
+        if output_mode == "repeat":
+            repeat_spin.setValue(
+                action.get(
+                    "repeat",
+                    2,
+                )
+            )
+        elif output_mode == "hold":
+            hold_output_spin.setValue(
+                action.get(
+                    "output_hold_ms",
+                    1000,
+                )
+            )
+
+        _sync_output_controls(
+            output_combo.currentIndex()
         )
 
         # 初始值：自定义或全局
@@ -2603,6 +3023,9 @@ class MainWindow(QMainWindow):
             "spin": param_spin,
             "global": global_check,
             "chord": chord,
+            "output_combo": output_combo,
+            "repeat_spin": repeat_spin,
+            "hold_output_spin": hold_output_spin,
         }
 
         disabled.stateChanged.connect(
@@ -3073,6 +3496,16 @@ class MainWindow(QMainWindow):
         self,
         *_args,
     ) -> None:
+        # 界面加载/重建期间，控件赋值触发的信号不算用户改动——
+        # 否则启动时会把控件默认状态（如"显示启动动作"未勾选）污染进
+        # 工作副本，导致刚打开就误报"有未保存修改"、退出时把设置写坏。
+        if getattr(
+            self,
+            "_loading_ui",
+            False,
+        ):
+            return
+
         # 先把界面状态同步到工作副本，再与后端配置真实对比：
         # 只有真正存在差异才显示"未保存"（改回去/取消操作不应误报）。
         self._sync_controls_to_working()
@@ -3127,6 +3560,13 @@ class MainWindow(QMainWindow):
         self,
         *_args,
     ) -> None:
+        if getattr(
+            self,
+            "_loading_ui",
+            False,
+        ):
+            return
+
         # 设置即时生效：防抖后提交（落盘 + 引擎即时应用）
         self._settings_timer.start()
 
@@ -3244,6 +3684,14 @@ class MainWindow(QMainWindow):
             "enable_gesture_overlay"
         ] = self.overlayCheck.isChecked()
 
+        settings[
+            "auto_check_update"
+        ] = self.autoCheckUpdate.isChecked()
+
+        settings[
+            "auto_update"
+        ] = self.autoUpdate.isChecked()
+
     def _sync_current_binding(
         self,
     ) -> None:
@@ -3302,6 +3750,57 @@ class MainWindow(QMainWindow):
                     "type": "chord",
                     "keys": list(chord),
                 }
+
+                # 输出行为：默认（不写字段）＝点一下/长按自动按住 1 秒
+                output_mode = (
+                    widgets[
+                        "output_combo"
+                    ].currentData()
+                )
+
+                if (
+                    output_mode == "tap"
+                ):
+                    action[
+                        "output_mode"
+                    ] = "tap"
+                elif (
+                    output_mode == "repeat"
+                ):
+                    action[
+                        "output_mode"
+                    ] = "repeat"
+
+                    repeat_val = (
+                        widgets[
+                            "repeat_spin"
+                        ].value()
+                    )
+
+                    if repeat_val > 1:
+                        action[
+                            "repeat"
+                        ] = repeat_val
+                elif (
+                    output_mode == "hold"
+                ):
+                    action[
+                        "output_mode"
+                    ] = "hold"
+                    action[
+                        "output_hold_ms"
+                    ] = (
+                        widgets[
+                            "hold_output_spin"
+                        ].value()
+                    )
+                elif (
+                    output_mode
+                    == "hold_until_release"
+                ):
+                    action[
+                        "output_mode"
+                    ] = "hold_until_release"
 
                 if key == "hold":
                     if not widgets[
@@ -3636,6 +4135,36 @@ class MainWindow(QMainWindow):
             False
         )
 
+        self.autoCheckUpdate.blockSignals(
+            True
+        )
+
+        self.autoCheckUpdate.setChecked(
+            settings.get(
+                "auto_check_update",
+                False,
+            )
+        )
+
+        self.autoCheckUpdate.blockSignals(
+            False
+        )
+
+        self.autoUpdate.blockSignals(
+            True
+        )
+
+        self.autoUpdate.setChecked(
+            settings.get(
+                "auto_update",
+                False,
+            )
+        )
+
+        self.autoUpdate.blockSignals(
+            False
+        )
+
     # ------------------------------------------------------------------
     # Apply / import / export
     # ------------------------------------------------------------------
@@ -3718,8 +4247,15 @@ class MainWindow(QMainWindow):
             self._working
         )
 
-        self._refresh_binding_list()
-        self._load_settings()
+        # 应用后重建控件同样屏蔽信号，避免误报"有未保存修改"
+        self._loading_ui = True
+
+        try:
+            self._refresh_binding_list()
+            self._load_settings()
+        finally:
+            self._loading_ui = False
+
         self.refresh_status()
 
         new_language = (
@@ -3767,7 +4303,7 @@ class MainWindow(QMainWindow):
                 )
 
             self.engine.set_gesture_observer(
-                self._gesture_overlay.show_gesture
+                self._overlay_observer
             )
             return
 
@@ -3779,6 +4315,18 @@ class MainWindow(QMainWindow):
             self._gesture_overlay.hide()
             self._gesture_overlay.deleteLater()
             self._gesture_overlay = None
+
+    def _overlay_observer(
+        self,
+        description: str,
+    ) -> None:
+        """输出弹窗内容由引擎拼好："绑定显示名: 输出动作"。"""
+        if self._gesture_overlay is None:
+            return
+
+        self._gesture_overlay.show_gesture(
+            description
+        )
 
     # ------------------------------------------------------------------
     # Language / help
@@ -4407,6 +4955,338 @@ class MainWindow(QMainWindow):
         )
 
     # ------------------------------------------------------------------
+    # Update check
+    # ------------------------------------------------------------------
+
+    def _check_update(
+        self,
+    ) -> None:
+        self.update_button.setEnabled(
+            False
+        )
+        self.update_status.setText(
+            self.i18n.tr(
+                "update.checking"
+            )
+        )
+
+        worker = _UpdateCheckWorker()
+        worker.finished.connect(
+            self._on_update_done
+        )
+
+        self._update_worker = worker
+
+        thread = threading.Thread(
+            target=worker.run,
+            daemon=True,
+        )
+        thread.start()
+
+    def _on_update_done(
+        self,
+        ok: bool,
+        latest: str,
+        exe_url: str,
+        page_url: str,
+    ) -> None:
+        self.update_button.setEnabled(
+            True
+        )
+
+        if not ok:
+            self.update_status.setText(
+                self.i18n.tr(
+                    "update.check_failed"
+                )
+            )
+            return
+
+        from multitapkey import __version__
+        from multitapkey.core.updater import (
+            compare_versions,
+        )
+
+        if (
+            compare_versions(
+                latest,
+                __version__,
+            )
+            > 0
+        ):
+            self.update_status.setText(
+                self.i18n.tr(
+                    "update.available",
+                    version=latest,
+                )
+            )
+
+            box = QMessageBox(
+                self
+            )
+            box.setWindowTitle(
+                self.i18n.tr(
+                    "update.title"
+                )
+            )
+            box.setText(
+                self.i18n.tr(
+                    "update.available_message",
+                    version=latest,
+                )
+            )
+            box.setIcon(
+                QMessageBox.Icon.Information
+            )
+
+            download_button = box.addButton(
+                self.i18n.tr(
+                    "update.download"
+                ),
+                QMessageBox.ButtonRole.AcceptRole,
+            )
+            box.addButton(
+                QMessageBox.StandardButton.Close
+            )
+
+            box.exec()
+
+            if (
+                box.clickedButton()
+                == download_button
+                and page_url
+            ):
+                webbrowser.open(page_url)
+
+            return
+
+        self.update_status.setText(
+            self.i18n.tr(
+                "update.latest"
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Auto update (v2.2+)
+    # ------------------------------------------------------------------
+
+    def _maybe_auto_check_update(self) -> None:
+        """启动时自动检查更新（设置「每次启动检查更新」开启才执行）。"""
+        if not self._config_valid:
+            return
+
+        if not (
+            self._config.settings.auto_check_update
+        ):
+            return
+
+        worker = _UpdateCheckWorker()
+        worker.finished.connect(
+            self._on_auto_check_done
+        )
+
+        self._update_worker = worker
+
+        thread = threading.Thread(
+            target=worker.run,
+            daemon=True,
+        )
+        thread.start()
+
+    def _on_auto_check_done(
+        self,
+        ok: bool,
+        latest: str,
+        exe_url: str,
+        page_url: str,
+    ) -> None:
+        from multitapkey import __version__
+        from multitapkey.core.updater import (
+            compare_versions,
+        )
+
+        if not ok:
+            self.update_status.setText(
+                self.i18n.tr(
+                    "update.check_failed"
+                )
+            )
+            return
+
+        if (
+            compare_versions(
+                latest,
+                __version__
+            )
+            <= 0
+        ):
+            # 已是最新：启动时不打扰用户
+            return
+
+        if (
+            self._config.settings.auto_update
+            and exe_url
+        ):
+            self.update_status.setText(
+                self.i18n.tr(
+                    "update.downloading"
+                )
+            )
+            self._download_update_in_background(
+                exe_url
+            )
+        else:
+            self.update_status.setText(
+                self.i18n.tr(
+                    "update.available",
+                    version=latest,
+                )
+            )
+
+    def _download_update_in_background(
+        self,
+        url: str,
+    ) -> None:
+        """后台下载新版 exe；下载成功则退出时自动安装。"""
+        import sys
+
+        from multitapkey.core.config_store import (
+            config_dir,
+        )
+
+        # 源码运行时 sys.executable 是 python.exe，不能替换——
+        # 只提示有新版，回退为手动去发布页。
+        if not getattr(
+            sys,
+            "frozen",
+            False,
+        ):
+            self.update_status.setText(
+                self.i18n.tr(
+                    "update.available"
+                )
+            )
+            return
+
+        update_dir = (
+            config_dir() / "update"
+        )
+        update_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        dest = (
+            update_dir / "TapLayer.exe.new"
+        )
+
+        worker = _UpdateDownloadWorker(
+            url,
+            str(dest),
+        )
+        worker.finished.connect(
+            self._on_update_downloaded
+        )
+
+        self._download_worker = worker
+        self._pending_update_path = str(
+            dest
+        )
+
+        thread = threading.Thread(
+            target=worker.run,
+            daemon=True,
+        )
+        thread.start()
+
+    def _on_update_downloaded(
+        self,
+        ok: bool,
+    ) -> None:
+        if not ok:
+            self._pending_update_path = None
+            self.update_status.setText(
+                self.i18n.tr(
+                    "update.download_failed"
+                )
+            )
+            return
+
+        self.update_status.setText(
+            self.i18n.tr(
+                "update.downloaded"
+            )
+        )
+
+    def _install_pending_update(self) -> None:
+        """退出前安装已下载的更新（bat 独立进程替换 exe）。
+
+        挂在 app.aboutToQuit：无论走关闭窗口退出还是托盘退出，
+        只要有待安装的更新都会执行。
+        """
+        import sys
+
+        from multitapkey.core.config_store import (
+            config_dir,
+        )
+
+        path = getattr(
+            self,
+            "_pending_update_path",
+            None,
+        )
+
+        if not path:
+            return
+
+        if not os.path.exists(path):
+            return
+
+        if not getattr(
+            sys,
+            "frozen",
+            False,
+        ):
+            return
+
+        current = sys.executable
+
+        update_dir = (
+            config_dir() / "update"
+        )
+        update_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        bat_path = (
+            update_dir / "apply_update.bat"
+        )
+
+        # 路径需为 ASCII（cmd 使用 OEM 编码，非 ASCII 会乱码）。
+        # 等 5 秒让主进程完全退出，再替换 exe，替换成功后重新启动。
+        bat_content = (
+            "@echo off\r\n"
+            "timeout /t 5 /nobreak >nul\r\n"
+            f'move /y "{current}" "{current}.old"\r\n'
+            f'move /y "{path}" "{current}"\r\n'
+            f'del /q "{current}.old"\r\n'
+            f'start "" "{current}"\r\n'
+            'del /q "%~f0"\r\n'
+        )
+
+        try:
+            bat_path.write_text(
+                bat_content,
+                encoding="ascii",
+            )
+            os.startfile(str(bat_path))
+        except Exception:
+            log.exception(
+                "failed to schedule update install"
+            )
+
+    # ------------------------------------------------------------------
     # Startup / error text
     # ------------------------------------------------------------------
 
@@ -4472,7 +5352,7 @@ class MainWindow(QMainWindow):
         self,
         event,
     ) -> None:
-        # 点最小化（-）→ 正常最小化到任务栏，不进托盘。
+        # 点最小化（-）→ 正常最小化到任务栏（不进托盘）
         super().changeEvent(
             event
         )

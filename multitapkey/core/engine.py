@@ -35,6 +35,9 @@ from .state_machine import (
 
 log = logging.getLogger(__name__)
 
+# 长按手势未显式设置输出行为时，自动"按住输出键"的默认时长（毫秒）
+_DEFAULT_HOLD_OUTPUT_MS = 1000
+
 # Gesture -> tap count
 _TAP_COUNT_FOR_GESTURE: dict[
     Gesture,
@@ -54,15 +57,43 @@ _TAP_COUNT_FOR_GESTURE: dict[
 
 def _action_from_spec(
     spec: ActionSpec,
+    *,
+    is_long: bool = False,
 ) -> Action:
     if spec.type != "chord":
         return Action(
             kind="disabled"
         )
 
+    # 输出行为未显式设置：长按手势自动变长按（按住 1 秒），
+    # 其余手势点一下。
+    output_mode = spec.output_mode
+
+    if output_mode is None:
+        output_mode = (
+            "hold"
+            if is_long
+            else "tap"
+        )
+
+    hold_ms = spec.output_hold_ms
+
+    if (
+        output_mode == "hold"
+        and hold_ms is None
+    ):
+        hold_ms = _DEFAULT_HOLD_OUTPUT_MS
+
     return Action(
         kind="chord",
         keys=spec.keys,
+        output_mode=output_mode,
+        repeat=(
+            spec.repeat
+            if spec.repeat
+            else 1
+        ),
+        hold_ms=hold_ms,
     )
 
 
@@ -76,7 +107,16 @@ class Engine:
 
         self._dispatcher = ActionDispatcher(
             chord=input_backend.tap_chord,
+            hold_until=(
+                input_backend.hold_chord_until
+            ),
         )
+
+        # "按住直到松开触发键"的活动输出：trigger_display -> release()
+        self._hold_map: dict[
+            str,
+            Callable[[], None],
+        ] = {}
 
         self._machines: dict[
             str,
@@ -136,6 +176,8 @@ class Engine:
     def shutdown(self) -> None:
         self._active = False
         self.backend.set_enabled(False)
+
+        self._release_all_holds()
 
         for machine in self._machines.values():
             machine.reset()
@@ -241,6 +283,8 @@ class Engine:
         trigger_chords: set[
             tuple[str, ...]
         ] = set()
+
+        self._release_all_holds()
 
         for binding in profile.bindings:
             if not binding.enabled:
@@ -356,6 +400,8 @@ class Engine:
             False
         )
 
+        self._release_all_holds()
+
         for machine in self._machines.values():
             machine.reset()
 
@@ -379,7 +425,20 @@ class Engine:
         for machine in self._machines.values():
             machine.reset()
 
+        self._release_all_holds()
+
         self._drain_queue()
+
+    def _release_all_holds(self) -> None:
+        for release in self._hold_map.values():
+            try:
+                release()
+            except Exception:
+                log.exception(
+                    "failed to release held output"
+                )
+
+        self._hold_map.clear()
 
     def pump(self) -> None:
         if not self._active:
@@ -391,6 +450,23 @@ class Engine:
                 event = (
                     self.backend.events.get_nowait()
                 )
+
+                # 触发键松开：释放"按住直到松开触发键"的输出
+                if not event.is_down:
+                    release = (
+                        self._hold_map.pop(
+                            event.key,
+                            None,
+                        )
+                    )
+
+                    if release is not None:
+                        try:
+                            release()
+                        except Exception:
+                            log.exception(
+                                "failed to release held output"
+                            )
 
                 machine = (
                     self._machines.get(
@@ -454,10 +530,15 @@ class Engine:
 
         if gesture == Gesture.LONG:
             self._notify_observer(
-                binding.gestures.hold
+                binding,
+                binding.gestures.hold,
             )
             self.execute_action_spec(
-                binding.gestures.hold
+                binding.gestures.hold,
+                is_long=True,
+                trigger_display=(
+                    trigger_display
+                ),
             )
             return
 
@@ -475,10 +556,15 @@ class Engine:
 
         if action_spec is not None:
             self._notify_observer(
-                action_spec
+                binding,
+                action_spec,
             )
             self.execute_action_spec(
-                action_spec
+                action_spec,
+                is_long=False,
+                trigger_display=(
+                    trigger_display
+                ),
             )
 
     @staticmethod
@@ -496,6 +582,7 @@ class Engine:
 
     def _notify_observer(
         self,
+        binding: Binding,
         action_spec: ActionSpec,
     ) -> None:
         if self._gesture_observer is None:
@@ -505,10 +592,11 @@ class Engine:
             return
 
         try:
+            # 弹窗内容 = "绑定显示名: 输出动作"
+            # 绑定显示名 = 自定义名（有则用），否则触发键
             self._gesture_observer(
-                chord_display(
-                    action_spec.keys
-                )
+                f"{binding.display_name}: "
+                f"{chord_display(action_spec.keys)}"
             )
         except Exception:
             log.exception(
@@ -518,15 +606,47 @@ class Engine:
     def execute_action_spec(
         self,
         spec: ActionSpec,
+        *,
+        is_long: bool = False,
+        trigger_display: str | None = None,
     ) -> None:
         action = _action_from_spec(
-            spec
+            spec,
+            is_long=is_long,
+        )
+
+        # 调试用：触发键、手势、输出模式、输出键、按住时长
+        log.info(
+            "dispatch: trigger=%s gesture=%s "
+            "mode=%s keys=%s hold_ms=%s",
+            trigger_display,
+            "long" if is_long else "tap",
+            action.output_mode,
+            action.keys,
+            action.hold_ms,
         )
 
         try:
-            self._dispatcher.execute(
-                action
-            )
+            if (
+                action.output_mode
+                == "hold_until_release"
+                and trigger_display
+            ):
+                # 按住直到松开触发键：记录释放回调，触发键松开时释放
+                release = (
+                    self._dispatcher.execute(
+                        action
+                    )
+                )
+
+                if release is not None:
+                    self._hold_map[
+                        trigger_display
+                    ] = release
+            else:
+                self._dispatcher.execute(
+                    action
+                )
         except Exception:
             log.exception(
                 "action execution failed"

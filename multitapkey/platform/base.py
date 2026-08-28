@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from queue import SimpleQueue
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +58,16 @@ class InputBackend(Protocol):
     def tap_chord(
         self,
         keys: tuple[str, ...],
+        hold_ms: int | None = None,
     ) -> None:
-        ...
+        """输出一个 chord。hold_ms=None 为正常点按；
+        hold_ms=N 为按住 N 毫秒后再松开。"""
+
+    def hold_chord_until(
+        self,
+        keys: tuple[str, ...],
+    ) -> Callable[[], None]:
+        """按住一个 chord 并保持，返回"释放"回调（幂等，可多次调用）。"""
 
 
 @runtime_checkable

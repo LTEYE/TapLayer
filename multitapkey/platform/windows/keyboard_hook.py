@@ -140,6 +140,10 @@ class WindowsKeyboardBackend:
         self._triggers: list[
             tuple[str, frozenset[str]]
         ] = []
+        # 动态白名单：配置里所有触发键的集合（含左右修饰键展开）。
+        # 白名单外的键直接放行，不进状态机——减少无效处理，也避免
+        # 普通打字时误碰状态。
+        self._whitelist: frozenset[str] = frozenset()
 
         self._enabled = False
 
@@ -192,6 +196,10 @@ class WindowsKeyboardBackend:
                 for chord in self._trigger_chords
             ),
             key=lambda item: item[0],
+        )
+
+        self._whitelist = (
+            self._build_whitelist()
         )
 
     def set_enabled(self, enabled: bool) -> None:
@@ -480,7 +488,13 @@ class WindowsKeyboardBackend:
             ).contents
 
             # 1. Own injected input: never interpret.
-            if info.dwExtraInfo == INJECTED_MARKER:
+            # 同时过滤系统注入标志（LLKHF_INJECTED）：keybd_event 等
+            # 兜底发送方式不带 INJECTED_MARKER，但会带注入标志——
+            # 自己发出的键绝不能再次进入识别状态机（防反馈环）。
+            if (
+                info.dwExtraInfo == INJECTED_MARKER
+                or info.flags & LLKHF_INJECTED
+            ):
                 return user32.CallNextHookEx(
                     None,
                     n_code,
@@ -522,6 +536,20 @@ class WindowsKeyboardBackend:
                 self._pressed.discard(key)
                 self._deactivate_affected(key)
                 return 1
+
+            # 2.5 动态白名单：只处理配置里用到的触发键（含左右修饰键）。
+            # 白名单外的键直接放行，不进状态机。录制模式要捕获任意键，
+            # 不做过滤。
+            if (
+                not self._capture_mode
+                and key not in self._whitelist
+            ):
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
 
             # 3. Chord capture（录制器）
             if self._capture_mode:
@@ -777,6 +805,19 @@ class WindowsKeyboardBackend:
                 self._deactivate_affected(key)
                 return 1
 
+            # 2.5 动态白名单：只处理配置里用到的触发键（鼠标键同样）。
+            # 录制模式要捕获任意键，不做过滤。
+            if (
+                not self._capture_mode
+                and key not in self._whitelist
+            ):
+                return user32.CallNextHookEx(
+                    None,
+                    n_code,
+                    w_param,
+                    l_param,
+                )
+
             # 3. Chord capture（录制器：鼠标键也能录进去）
             if self._capture_mode:
                 if is_down:
@@ -936,7 +977,57 @@ class WindowsKeyboardBackend:
         "RightWin": "Win",
     }
 
-    @staticmethod
+    @classmethod
+    def _expand_modifier(
+        cls,
+        key: str,
+    ) -> set[str]:
+        """触发键展开为"基础名 + 左右两侧"，保证任意一侧按键都进状态机。
+
+        触发键显式用 LeftCtrl 等具体侧名时，用户换另一侧按下也应被识别
+        （_chord_matches 做了左右归一）；白名单必须覆盖两侧，否则
+        RightCtrl 会被当白名单外按键直接放行，组合触发永远匹配不上。
+        """
+        base = cls._SIDE_TO_BASE.get(
+            key,
+            key,
+        )
+        expanded = {
+            key,
+            base,
+        }
+
+        if base in (
+            "Ctrl",
+            "Shift",
+            "Alt",
+            "Win",
+        ):
+            expanded.add(
+                "Left" + base
+            )
+            expanded.add(
+                "Right" + base
+            )
+
+        return expanded
+
+    def _build_whitelist(
+        self,
+    ) -> frozenset[str]:
+        """动态白名单：当前配置所有触发键（组合触发含全部组成键）。"""
+        keys: set[str] = set()
+
+        for _display, chord_set in (
+            self._triggers
+        ):
+            for k in chord_set:
+                keys.update(
+                    self._expand_modifier(k)
+                )
+
+        return frozenset(keys)
+
     @staticmethod
     def _chord_matches(
         chord_set: frozenset[str],

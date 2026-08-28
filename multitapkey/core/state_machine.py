@@ -188,7 +188,7 @@ class TapStateMachine:
             if (
                 elapsed_ms
                 >= self._window_ms(
-                    self._count + 1
+                    self._count
                 )
             ):
                 self._resolve_waiting()
@@ -205,7 +205,7 @@ class TapStateMachine:
             if (
                 elapsed_ms
                 < self._window_ms(
-                    self._count + 1
+                    self._count
                 )
             ):
                 self._count += 1
