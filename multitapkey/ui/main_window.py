@@ -914,15 +914,20 @@ class MainWindow(QMainWindow):
         self.update_button.clicked.connect(
             self._check_update
         )
+        # 注册进 _tr_buttons：语言切换时 _retranslate_ui 才会刷新按钮文本
+        self._tr_buttons[
+            "settings.update"
+        ] = self.update_button
 
         self.update_status = QLabel("")
         self.update_status.setObjectName(
             "gestureParam"
         )
 
-        update_row = QWidget()
+        # 挂到 self：语言切换时 _retranslate_ui 需要按此引用刷新行标签
+        self.update_row = QWidget()
         update_layout = QHBoxLayout(
-            update_row
+            self.update_row
         )
         update_layout.setContentsMargins(
             0,
@@ -945,7 +950,7 @@ class MainWindow(QMainWindow):
             self.i18n.tr(
                 "settings.update_label"
             ),
-            update_row,
+            self.update_row,
         )
 
         main_layout.addWidget(
@@ -4723,6 +4728,15 @@ class MainWindow(QMainWindow):
             self.overlayCheck: (
                 "settings.overlay"
             ),
+            self.autoCheckUpdate: (
+                "settings.auto_check_update"
+            ),
+            self.autoUpdate: (
+                "settings.auto_update"
+            ),
+            self.update_row: (
+                "settings.update_label"
+            ),
         }
 
         for i in range(
@@ -5392,13 +5406,18 @@ class MainWindow(QMainWindow):
             self.i18n.tr(
                 "close.to_tray"
             ),
-            QMessageBox.ButtonRole.RejectRole,
+            QMessageBox.ButtonRole.YesRole,
         )
         cancel_button = box.addButton(
             self.i18n.tr(
                 "close.cancel"
             ),
-            QMessageBox.ButtonRole.DestructiveRole,
+            QMessageBox.ButtonRole.RejectRole,
+        )
+        # 弹窗右上角 × 与 Esc 都触发 reject，会归到 RejectRole 按钮——
+        # 必须让"取消"持有 RejectRole，否则点 × 会被当成最小化到托盘。
+        box.setEscapeButton(
+            cancel_button
         )
         box.setDefaultButton(
             tray_button
@@ -5417,12 +5436,12 @@ class MainWindow(QMainWindow):
             return
 
         if clicked == tray_button:
-            # 点 × 选择隐藏到托盘：窗口隐藏，程序继续在后台运行。
+            # 最小化到托盘：窗口隐藏，程序继续在后台运行。
             event.ignore()
             self.hide()
             return
 
-        # 取消（含点弹窗右上角叉）：什么都不做，窗口保持原样。
+        # 取消（含点弹窗右上角叉 / Esc）：什么都不做，窗口保持原样。
         event.ignore()
 
     def showEvent(

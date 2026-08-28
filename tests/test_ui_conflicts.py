@@ -119,3 +119,51 @@ def test_record_trigger_accepts_unique(window):
 
     assert len(warned) == 0
     assert window._trigger_chord == ("F23",)
+
+
+def _settings_row_labels(window):
+    """字段控件 → 行标签文本（与 _retranslate_ui 同一取法）。"""
+    from PySide6.QtWidgets import QFormLayout
+
+    labels = {}
+
+    for i in range(window._settings_form.rowCount()):
+        field_item = window._settings_form.itemAt(
+            i, QFormLayout.FieldRole
+        )
+        label_item = window._settings_form.itemAt(
+            i, QFormLayout.LabelRole
+        )
+
+        if field_item is None or label_item is None:
+            continue
+
+        field = field_item.widget()
+        label = label_item.widget()
+
+        if field is not None and label is not None:
+            labels[field] = label.text()
+
+    return labels
+
+
+def test_language_switch_retranslates_update_widgets(window):
+    """切语言后，自动更新相关行标签与按钮必须跟着翻译（回归：漏登记导致残留中文）。"""
+    i18n = window.i18n
+
+    i18n.set_language("en_US")
+    window._retranslate_ui()
+
+    try:
+        labels = _settings_row_labels(window)
+
+        assert labels[window.autoCheckUpdate] == (
+            "Check for updates on startup"
+        )
+        assert labels[window.autoUpdate] == "Auto-update"
+        assert labels[window.update_row] == "Version"
+        assert window.update_button.text() == "Check for updates"
+    finally:
+        # 还原语言，避免影响同 fixture 的其它用例
+        i18n.set_language("zh_CN")
+        window._retranslate_ui()
