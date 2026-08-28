@@ -289,6 +289,19 @@ def main() -> int:
         engine.shutdown
     )
 
-    window.show()
+    # 退出前自动保存未应用的设置（修复：改完设置直接退出/托盘
+    # 退出会导致下次启动回到旧配置）
+    app.aboutToQuit.connect(
+        window.save_if_dirty
+    )
+
+    # 退出前安装已下载的自动更新（bat 独立进程替换 exe 后重启）
+    app.aboutToQuit.connect(
+        window._install_pending_update
+    )
+
+    # 开机自启（任务计划带 --hidden）→ 启动后不显示主窗口，直接进托盘
+    if "--hidden" not in sys.argv[1:]:
+        window.show()
 
     return app.exec()
