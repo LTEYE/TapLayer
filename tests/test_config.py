@@ -2,6 +2,9 @@ import pytest
 
 from multitapkey.core.chord import canonicalize_keys
 from multitapkey.core.config_models import (
+    MAX_DOUBLE_TAP_INTERVAL_MS,
+    MIN_DOUBLE_TAP_INTERVAL_MS,
+    MIN_HOLD_THRESHOLD_MS,
     ActionSpec,
     Binding,
     Config,
@@ -113,33 +116,41 @@ def test_bool_rejected_as_double_tap():
 
 
 def test_double_tap_range():
-    with pytest.raises(ConfigError):
-        validate_and_build(
-            make_dict(
-                settings={
-                    "double_tap_interval_ms": 10,
-                    "hold_threshold_ms": 500,
-                    "start_with_windows": False,
-                    "language": "system",
-                    "enable_gesture_overlay": False,
-                }
-            )
+    # 超范围值不再拒绝（拒绝会让旧配置整个加载失败），
+    # 而是钳制到最小合理值，防止识别混乱。
+    config = validate_and_build(
+        make_dict(
+            settings={
+                "double_tap_interval_ms": 10,
+                "hold_threshold_ms": 500,
+                "start_with_windows": False,
+                "language": "system",
+                "enable_gesture_overlay": False,
+            }
         )
+    )
+    assert (
+        config.settings.double_tap_interval_ms
+        == MIN_DOUBLE_TAP_INTERVAL_MS
+    )
 
 
 def test_hold_range():
-    with pytest.raises(ConfigError):
-        validate_and_build(
-            make_dict(
-                settings={
-                    "double_tap_interval_ms": 250,
-                    "hold_threshold_ms": 50,
-                    "start_with_windows": False,
-                    "language": "system",
-                    "enable_gesture_overlay": False,
-                }
-            )
+    config = validate_and_build(
+        make_dict(
+            settings={
+                "double_tap_interval_ms": 250,
+                "hold_threshold_ms": 50,
+                "start_with_windows": False,
+                "language": "system",
+                "enable_gesture_overlay": False,
+            }
         )
+    )
+    assert (
+        config.settings.hold_threshold_ms
+        == MIN_HOLD_THRESHOLD_MS
+    )
 
 
 def test_overlay_must_be_bool():
@@ -666,22 +677,32 @@ def test_interval_ms_defaults_none():
 
 
 def test_interval_ms_invalid_rejected():
+    # 超范围值被钳制到边界（旧行为是拒绝；拒绝会让坏配置废掉整个文件）
     data = make_dict()
     b = binding_dict()
     b["gestures"]["taps"]["2"][
         "interval_ms"
     ] = 5000
 
-    with pytest.raises(ConfigError):
-        validate_and_build(
-            make_dict(
-                profiles={
-                    "default": {"bindings": [b]},
-                    "Gaming": {"bindings": []},
-                    "Work": {"bindings": []},
-                }
-            )
+    config = validate_and_build(
+        make_dict(
+            profiles={
+                "default": {"bindings": [b]},
+                "Gaming": {"bindings": []},
+                "Work": {"bindings": []},
+            }
         )
+    )
+
+    profile = next(
+        p for p in config.profiles if p.name == "default"
+    )
+    tap2 = next(
+        a
+        for count, a in profile.bindings[0].gestures.taps
+        if count == 2
+    )
+    assert tap2.interval_ms == MAX_DOUBLE_TAP_INTERVAL_MS
 
 
 def test_hold_ms_invalid_rejected():
@@ -689,13 +710,86 @@ def test_hold_ms_invalid_rejected():
     b = binding_dict()
     b["gestures"]["hold"]["hold_ms"] = -1
 
-    with pytest.raises(ConfigError):
-        validate_and_build(
-            make_dict(
-                profiles={
-                    "default": {"bindings": [b]},
-                    "Gaming": {"bindings": []},
-                    "Work": {"bindings": []},
-                }
-            )
+    config = validate_and_build(
+        make_dict(
+            profiles={
+                "default": {"bindings": [b]},
+                "Gaming": {"bindings": []},
+                "Work": {"bindings": []},
+            }
         )
+    )
+
+    profile = next(
+        p for p in config.profiles if p.name == "default"
+    )
+    assert (
+        profile.bindings[0].gestures.hold.hold_ms
+        == MIN_HOLD_THRESHOLD_MS
+    )
+
+
+def test_update_settings_default_false():
+    # v2.2+ 旧配置没有更新字段 → 默认关闭（向后兼容）
+    config = validate_and_build(
+        make_dict()
+    )
+    assert (
+        config.settings.auto_check_update
+        is False
+    )
+    assert (
+        config.settings.auto_update
+        is False
+    )
+
+
+def test_update_settings_roundtrip():
+    data = make_dict(
+        settings={
+            "double_tap_interval_ms": 250,
+            "hold_threshold_ms": 500,
+            "start_with_windows": False,
+            "language": "system",
+            "enable_gesture_overlay": False,
+            "theme": "system",
+            "auto_check_update": True,
+            "auto_update": True,
+        }
+    )
+
+    config = validate_and_build(data)
+
+    assert (
+        config.settings.auto_check_update
+        is True
+    )
+    assert (
+        config.settings.auto_update
+        is True
+    )
+
+    dumped = to_dict(config)
+
+    assert (
+        dumped["settings"]["auto_check_update"]
+        is True
+    )
+    assert (
+        dumped["settings"]["auto_update"]
+        is True
+    )
+
+
+def test_update_settings_must_be_bool():
+    data = make_dict()
+    data["settings"]["auto_check_update"] = "yes"
+
+    with pytest.raises(ConfigError):
+        validate_and_build(data)
+
+    data = make_dict()
+    data["settings"]["auto_update"] = 1
+
+    with pytest.raises(ConfigError):
+        validate_and_build(data)

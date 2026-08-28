@@ -9,6 +9,7 @@ from multitapkey.core.config_models import (
     Settings,
 )
 from multitapkey.core.engine import Engine
+from multitapkey.core.state_machine import Gesture
 from multitapkey.platform.base import (
     CaptureResult,
     RawKeyEvent,
@@ -32,6 +33,7 @@ def make_config(
     taps=None,
     hold=None,
     trigger=("F24",),
+    binding_name="",
 ):
     if taps is None:
         taps = {
@@ -49,6 +51,7 @@ def make_config(
             ),
             hold=hold,
         ),
+        name=binding_name,
     )
 
     return Config(
@@ -115,6 +118,7 @@ class FakeKeyboardBackend:
 class FakeInputBackend:
     def __init__(self) -> None:
         self.sent: list[tuple] = []
+        self.held: list[tuple] = []
 
     def tap_key(self, key: str) -> None:
         self.sent.append((key,))
@@ -122,8 +126,36 @@ class FakeInputBackend:
     def tap_chord(
         self,
         keys,
+        hold_ms=None,
     ) -> None:
-        self.sent.append(tuple(keys))
+        entry = tuple(keys)
+
+        if hold_ms is not None:
+            entry = entry + (hold_ms,)
+
+        self.sent.append(entry)
+
+    def hold_chord_until(
+        self,
+        keys,
+    ):
+        entry = tuple(keys)
+        self.held.append(entry)
+
+        state = {"done": False}
+
+        def release() -> None:
+            if state["done"]:
+                return
+
+            state["done"] = True
+
+            try:
+                self.held.remove(entry)
+            except ValueError:
+                pass
+
+        return release
 
 
 def make_engine(config=None):
@@ -255,8 +287,9 @@ def test_hold_dispatches():
         Gesture.LONG,
     )
 
+    # 长按手势未显式设置输出行为 → 自动"按住 1 秒"
     assert inputs.sent == [
-        ("F21",)
+        ("F21", 1000),
     ]
 
 
@@ -342,8 +375,32 @@ def test_gesture_observer_notified():
     feed(keyboard, "F24", False, 0.05)
     engine.pump()
 
-    # 观察者收到的是"将要执行的输出动作"
-    assert observed == ["F23"]
+    # 观察者收到"绑定显示名: 输出动作"（无自定义名 → 触发键）
+    assert observed == ["F24: F23"]
+
+
+def test_gesture_observer_uses_custom_binding_name():
+    engine, keyboard, _ = make_engine(
+        make_config(
+            taps={
+                1: chord("F23"),
+            },
+            binding_name="开镜",
+        )
+    )
+
+    observed = []
+
+    engine.set_gesture_observer(
+        observed.append
+    )
+
+    feed(keyboard, "F24", True, 0.0)
+    feed(keyboard, "F24", False, 0.05)
+    engine.pump()
+
+    # 有自定义名 → 弹窗显示自定义名
+    assert observed == ["开镜: F23"]
 
 
 def test_gesture_observer_not_called_for_disabled():
@@ -394,3 +451,80 @@ def test_pause_clears_state():
 
     # 暂停时事件被丢弃，不触发动作
     assert engine.paused
+
+
+def test_long_hold_until_release_follows_trigger():
+    engine, keyboard, inputs = make_engine(
+        make_config(
+            taps={1: chord("F23")},
+            hold=ActionSpec(
+                type="chord",
+                keys=("F21",),
+                output_mode="hold_until_release",
+            ),
+        )
+    )
+
+    engine._dispatch(
+        "F24",
+        Gesture.LONG,
+    )
+
+    assert inputs.held == [("F21",)]
+
+    # 触发键松开 → 输出键释放
+    feed(
+        keyboard,
+        "F24",
+        False,
+        10.0,
+    )
+    engine.pump()
+
+    assert inputs.held == []
+
+
+def test_repeat_output_taps_multiple():
+    engine, keyboard, inputs = make_engine(
+        make_config(
+            taps={
+                1: ActionSpec(
+                    type="chord",
+                    keys=("F23",),
+                    output_mode="repeat",
+                    repeat=3,
+                ),
+            }
+        )
+    )
+
+    engine._dispatch(
+        "F24",
+        Gesture.SINGLE,
+    )
+
+    assert inputs.sent == [
+        ("F23",),
+        ("F23",),
+        ("F23",),
+    ]
+
+
+def test_long_with_explicit_tap_stays_tap():
+    engine, keyboard, inputs = make_engine(
+        make_config(
+            taps={1: chord("F23")},
+            hold=ActionSpec(
+                type="chord",
+                keys=("F21",),
+                output_mode="tap",
+            ),
+        )
+    )
+
+    engine._dispatch(
+        "F24",
+        Gesture.LONG,
+    )
+
+    assert inputs.sent == [("F21",)]

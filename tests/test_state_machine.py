@@ -8,13 +8,15 @@ def make(
     max_taps=3,
     tap_intervals=None,
     hold_override_ms=None,
+    double_tap_interval_ms=250,
+    hold_threshold_ms=500,
 ):
     fired = []
 
     machine = TapStateMachine(
         trigger_key="F24",
-        double_tap_interval_ms=250,
-        hold_threshold_ms=500,
+        double_tap_interval_ms=double_tap_interval_ms,
+        hold_threshold_ms=hold_threshold_ms,
         max_taps=max_taps,
         on_gesture=fired.append,
         tap_intervals=tap_intervals,
@@ -363,12 +365,13 @@ def test_per_level_window_fast_second_tap():
     machine.on_key("F24", False, 0.05)
     machine.on_key("F24", True, 0.15)
     machine.on_key("F24", False, 0.20)
-    # 等待第 3 击：窗口 = 全局 250ms（第 3 级未自定义）
-    machine.check_timeouts(0.40)
+    # 第 2 击的窗口 = tap_intervals[2] = 200ms：
+    # 200ms 内没有第 3 击 → 以双击收尾
+    machine.check_timeouts(0.35)
 
     assert fired == []
 
-    machine.check_timeouts(0.50)
+    machine.check_timeouts(0.45)
 
     assert fired == [Gesture.DOUBLE]
 
@@ -380,5 +383,52 @@ def test_hold_override():
 
     machine.on_key("F24", True, 0.0)
     machine.check_timeouts(0.35)
+
+    assert fired == [Gesture.LONG]
+
+
+def test_boss_scenario_double_uses_level1_window():
+    """老板场景回归：全局窗口 50ms + "1 击"行自定义窗口 600ms。
+
+    双击（两次点击间隔 200ms）必须识别为 DOUBLE——
+    等待第 2 击的窗口取"第 1 击行"的 600ms，而不是回落到
+    全局 50ms（旧语义：tap_intervals 错位导致双击被拆成两次单击）。
+    """
+    machine, fired = make(
+        tap_intervals={1: 600},
+        double_tap_interval_ms=50,
+    )
+
+    machine.on_key("F24", True, 0.0)
+    machine.on_key("F24", False, 0.05)
+    machine.on_key("F24", True, 0.25)
+    machine.on_key("F24", False, 0.30)
+    machine.check_timeouts(0.90)
+
+    assert fired == [Gesture.DOUBLE]
+
+
+def test_hold_threshold_100_quick_tap_stays_single():
+    """极端阈值（100ms）下，快速单击（60ms）仍是单击，不是长按。"""
+    machine, fired = make(
+        hold_threshold_ms=100,
+    )
+
+    machine.on_key("F24", True, 0.0)
+    machine.on_key("F24", False, 0.06)
+    # 松开后等双击窗口（250ms）超时 → 收尾为单击
+    machine.check_timeouts(0.40)
+
+    assert fired == [Gesture.SINGLE]
+
+
+def test_hold_threshold_100_slow_press_is_long():
+    """极端阈值（100ms）下，按住超过 100ms 判定为长按。"""
+    machine, fired = make(
+        hold_threshold_ms=100,
+    )
+
+    machine.on_key("F24", True, 0.0)
+    machine.check_timeouts(0.15)
 
     assert fired == [Gesture.LONG]
