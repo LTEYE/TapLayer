@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 (2026-08-29)
+
+- **Test button now shows the OSD popup**: clicking a gesture's "Test" button displays the same on-screen popup as a real trigger (`BindingName: OutputKeys`), and it shows **even when "Show output popup" is disabled in settings** — tests always give visual feedback.
+- **Test output honors the configured output behavior**: repeat count and hold duration from the binding are used in tests (previously every test degenerated to a single tap). `Hold until release` degrades to a 1-second hold in tests, because there is no trigger key to release in that context.
+- **Fixed**: the close dialog's ×/Esc roles were swapped — clicking × (or pressing Esc) minimized to the tray instead of canceling; both now cancel as expected.
+- **Fixed**: several auto-update setting controls did not retranslate when switching the UI language at runtime.
+
 ## 1.1.0 (2026-08-28)
 
 - **Output behavior per gesture**: besides "tap once", each output can be *repeat N times*, *hold for N ms*, or *hold until the trigger key is released*. Long-press triggers now default to a 1 s hold output (customizable). New "输出方式" (Output mode) selector in the binding editor.

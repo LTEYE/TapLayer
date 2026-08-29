@@ -1,6 +1,6 @@
 [project]
 name = "taplayer"
-version = "1.1.0"
+version = "1.1.1"
 description = "TapLayer (击层) — turn one key into many shortcuts with tap layers."
 requires-python = ">=3.10"
 license = { text = "GPL-3.0-or-later" }

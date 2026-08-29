@@ -363,6 +363,9 @@ class MainWindow(QMainWindow):
         # OSD 浮层（默认关闭）
         self._gesture_overlay = None
 
+        # 测试按钮专用 OSD 浮层：设置里没开"显示输出动作"时也能弹
+        self._test_overlay = None
+
         # 编辑器脏标记（区别于 working!=saved，控件变更立即置位）
         self._editor_dirty = False
 
@@ -4956,16 +4959,88 @@ class MainWindow(QMainWindow):
             ActionSpec,
         )
 
+        keys = tuple(
+            action.get(
+                "keys",
+                [],
+            )
+        )
+
+        # 测试没有"触发键松开"时机，hold_until_release 降级为
+        # hold（默认按住 1 秒），否则输出键会一直按住不放。
+        output_mode = action.get(
+            "output_mode"
+        )
+
+        if output_mode == "hold_until_release":
+            output_mode = "hold"
+
         self.engine.execute_action_spec(
             ActionSpec(
                 type=action["type"],
-                keys=tuple(
-                    action.get(
-                        "keys",
-                        [],
-                    )
+                keys=keys,
+                output_mode=output_mode,
+                repeat=action.get(
+                    "repeat",
+                    1,
+                ),
+                output_hold_ms=action.get(
+                    "output_hold_ms"
                 ),
             )
+        )
+
+        # 测试按钮始终弹 OSD（不受"显示输出动作"设置限制），
+        # 让用户直接看到这一级手势对应的输出动作。
+        if (
+            action["type"] == "chord"
+            and keys
+        ):
+            name = binding.get(
+                "name",
+                "",
+            )
+
+            display = (
+                name
+                or chord_display(
+                    tuple(
+                        binding[
+                            "trigger"
+                        ][
+                            "keys"
+                        ]
+                    )
+                )
+            )
+
+            self._show_test_overlay(
+                f"{display}: "
+                f"{chord_display(keys)}"
+            )
+
+    def _show_test_overlay(
+        self,
+        description: str,
+    ) -> None:
+        """测试按钮的 OSD：设置开启时复用常规浮层，否则用独立浮层。"""
+        if (
+            self._config is not None
+            and self._config.settings.enable_gesture_overlay
+            and self._gesture_overlay is not None
+        ):
+            self._gesture_overlay.show_gesture(
+                description
+            )
+            return
+
+        if self._test_overlay is None:
+            self._test_overlay = (
+                GestureOverlay()
+            )
+
+        self._test_overlay.show_gesture(
+            description
         )
 
     # ------------------------------------------------------------------
