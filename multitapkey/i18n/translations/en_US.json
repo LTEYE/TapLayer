@@ -61,7 +61,7 @@
   "update.checking": "Checking…",
   "update.latest": "You're up to date",
   "update.available": "New version v{version} available",
-  "update.available_message": "New version v{version} is available!\nClick \"Download\" to open the release page.",
+  "update.available_message": "New version v{version} is available!\nClick \"Download\" to fetch it in the background; it installs automatically when TapLayer exits.",
   "update.check_failed": "Check failed, try again later",
   "update.download": "Download",
   "update.title": "Check for Updates",

@@ -2,6 +2,7 @@
 
 ## 1.1.1 (2026-08-29)
 
+- **In-app update download from the manual check**: the "Download" button in the update dialog now downloads the new exe in the background and installs it automatically on exit (previously it only opened the release page in a browser). Falls back to opening the release page when running from source or when the release has no exe asset.
 - **Test button now shows the OSD popup**: clicking a gesture's "Test" button displays the same on-screen popup as a real trigger (`BindingName: OutputKeys`), and it shows **even when "Show output popup" is disabled in settings** — tests always give visual feedback.
 - **Test output honors the configured output behavior**: repeat count and hold duration from the binding are used in tests (previously every test degenerated to a single tap). `Hold until release` degrades to a 1-second hold in tests, because there is no trigger key to release in that context.
 - **Fixed**: the close dialog's ×/Esc roles were swapped — clicking × (or pressing Esc) minimized to the tray instead of canceling; both now cancel as expected.

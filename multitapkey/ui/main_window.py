@@ -5142,9 +5142,31 @@ class MainWindow(QMainWindow):
 
             if (
                 box.clickedButton()
-                == download_button
-                and page_url
+                != download_button
             ):
+                return
+
+            # 打包运行且发布页提供了 exe 附件：后台下载，退出时自动安装；
+            # 否则（源码运行 / 没有 exe 附件）回退为打开发布页手动下载。
+            import sys
+
+            if (
+                exe_url
+                and getattr(
+                    sys,
+                    "frozen",
+                    False,
+                )
+            ):
+                self.update_status.setText(
+                    self.i18n.tr(
+                        "update.downloading"
+                    )
+                )
+                self._download_update_in_background(
+                    exe_url
+                )
+            elif page_url:
                 webbrowser.open(page_url)
 
             return
@@ -5189,6 +5211,8 @@ class MainWindow(QMainWindow):
         exe_url: str,
         page_url: str,
     ) -> None:
+        import sys
+
         from multitapkey import __version__
         from multitapkey.core.updater import (
             compare_versions,
@@ -5215,6 +5239,11 @@ class MainWindow(QMainWindow):
         if (
             self._config.settings.auto_update
             and exe_url
+            and getattr(
+                sys,
+                "frozen",
+                False,
+            )
         ):
             self.update_status.setText(
                 self.i18n.tr(
@@ -5243,18 +5272,14 @@ class MainWindow(QMainWindow):
             config_dir,
         )
 
-        # 源码运行时 sys.executable 是 python.exe，不能替换——
-        # 只提示有新版，回退为手动去发布页。
+        # 源码运行时 sys.executable 是 python.exe，不能替换。
+        # 调用方（手动检查/自动检查）已保证仅在打包运行时进入，
+        # 这里兜底直接放弃，避免误改开发环境。
         if not getattr(
             sys,
             "frozen",
             False,
         ):
-            self.update_status.setText(
-                self.i18n.tr(
-                    "update.available"
-                )
-            )
             return
 
         update_dir = (
